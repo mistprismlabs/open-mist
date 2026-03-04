@@ -24,17 +24,17 @@ async function loadSDK() {
 }
 
 const MCP_BITABLE_SERVER = {
-  command: process.env.MCP_NODE_PATH || "/home/linuxbrew/.linuxbrew/bin/node",
+  command: process.env.MCP_NODE_PATH || process.execPath,
   args: [process.env.MCP_BITABLE_PATH || __dirname + "/mcp-bitable.mjs"],
 };
 
 const MCP_VIDEO_SERVER = {
-  command: process.env.MCP_NODE_PATH || "/home/linuxbrew/.linuxbrew/bin/node",
+  command: process.env.MCP_NODE_PATH || process.execPath,
   args: [__dirname + "/mcp-video.mjs"],
 };
 
 const MCP_COS_SERVER = {
-  command: process.env.MCP_NODE_PATH || "/home/linuxbrew/.linuxbrew/bin/node",
+  command: process.env.MCP_NODE_PATH || process.execPath,
   args: [__dirname + "/mcp-cos.mjs"],
   env: {
     COS_SECRET_ID: process.env.COS_SECRET_ID,

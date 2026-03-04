@@ -77,6 +77,7 @@ flowchart TB
 ### Prerequisites
 
 - Node.js >= 18
+- [Claude Code CLI](https://github.com/anthropics/claude-code) — the Agent SDK calls Claude CLI internally
 - SQLite3 (for sqlite-vec)
 - An Anthropic API key (or compatible endpoint)
 - Feishu app credentials (App ID + App Secret)
@@ -84,6 +85,10 @@ flowchart TB
 ### Install
 
 ```bash
+# 1. Install Claude Code CLI (required — the Agent SDK depends on it)
+npm install -g @anthropic-ai/claude-code
+
+# 2. Clone and install
 git clone https://github.com/chituhouse/open-mist.git
 cd open-mist
 npm install
