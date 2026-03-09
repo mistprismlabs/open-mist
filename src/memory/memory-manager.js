@@ -105,6 +105,10 @@ class MemoryManager {
     const conv = this.activeConversations.get(sessionId);
     if (!conv) return false;
 
+    // 刚重建的 session（messageCount < 2）不触发压缩
+    // 防止 PreCompact/rotate 重建后因 session 文件仍大而立即触发二次压缩
+    if (conv.messageCount < 2) return false;
+
     if (conv.messageCount >= COMPRESS_MESSAGE_THRESHOLD) return true;
 
     const duration = Date.now() - new Date(conv.startTime).getTime();
@@ -112,8 +116,7 @@ class MemoryManager {
 
     try {
       const os = require("os");
-      const projectDir = process.env.PROJECT_DIR || path.resolve(__dirname, '../..');
-      const SESSION_DIR = process.env.CLAUDE_SESSION_DIR || path.join(os.homedir(), ".claude", "projects", projectDir.replace(/\//g, '-'));
+      const SESSION_DIR = path.join(os.homedir(), ".claude", "projects", "-home-jarvis-jarvis-gateway");
       const sessionFile = path.join(SESSION_DIR, `${sessionId}.jsonl`);
       const stats = fs.statSync(sessionFile);
       if (stats.size >= COMPRESS_SIZE_THRESHOLD) return true;
@@ -127,7 +130,7 @@ class MemoryManager {
   async endConversation(sessionId) {
     const conv = this.activeConversations.get(sessionId);
     if (!conv) {
-      console.warn(`[MemoryManager] No active conversation: ${sessionId}`);
+      console.log(`[MemoryManager] Skip end: session ${sessionId.substring(0, 8)} not tracked (already ended or rotated)`);
       return null;
     }
 
@@ -297,6 +300,38 @@ class MemoryManager {
       }
     }
     return message + "\n";
+  }
+
+  // ==================== 手动写入记忆 ====================
+
+  async saveManual(content, chatId) {
+    const id = generateUUID();
+    const now = new Date().toISOString();
+    const summary = {
+      conversationId: id,
+      chatId: chatId || 'manual',
+      sessionId: 'manual',
+      chatType: '手动记忆',
+      startTime: now,
+      endTime: now,
+      messageCount: 1,
+      summary: {
+        userIntent: content.substring(0, 100),
+        keyDecisions: [content],
+        outcome: '手动写入',
+        entities: [],
+      },
+      context: { workingDirectory: '', gitBranch: '', filesModified: [], toolsUsed: [] },
+      importance: 9,
+      tags: ['手动记忆'],
+    };
+
+    this.shortTerm.save(summary);
+    await this.vectorStore.store(id, content, { chatId: chatId || 'manual', importance: 9 })
+      .catch(err => console.warn('[MemoryManager] Manual save vector failed:', err.message));
+
+    console.log(`[MemoryManager] Manual memory saved: ${content.substring(0, 50)}`);
+    return { success: true, id };
   }
 
   // ==================== 统计 ====================

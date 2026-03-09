@@ -2,11 +2,11 @@ const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const SITES_DIR = process.env.SITES_DIR || '/var/www/sites';
+const SITES_DIR = process.env.SITES_DIR || '/home/jarvis/sites';
 const NGINX_SITES = process.env.NGINX_SITES_DIR || '/etc/nginx/sites-available';
 const NGINX_ENABLED = process.env.NGINX_ENABLED_DIR || '/etc/nginx/sites-enabled';
-const SSL_CERT = process.env.SSL_CERT_PATH || '/etc/letsencrypt/live/example.com/fullchain.pem';
-const SSL_KEY = process.env.SSL_KEY_PATH || '/etc/letsencrypt/live/example.com/privkey.pem';
+const SSL_CERT = process.env.SSL_CERT_PATH || '/etc/letsencrypt/live/mistprism.com-0001/fullchain.pem';
+const SSL_KEY = process.env.SSL_KEY_PATH || '/etc/letsencrypt/live/mistprism.com-0001/privkey.pem';
 
 class Deployer {
   constructor() {
@@ -94,9 +94,9 @@ server {
       execFileSync('pm2', ['delete', appName], { stdio: 'ignore' });
     } catch (_) { /* ignore */ }
 
-    execFileSync('pm2', ['start', entry, '--name', appName, '--cwd', siteDir, '--', '--port', String(port)], {
-      env: { ...process.env, PORT: String(port) },
-    });
+    execFileSync('pm2', ['start', entry, '--name', appName, '--cwd', siteDir, '--', '--port', String(port)],
+      { env: { ...process.env, PORT: String(port) } }
+    );
     console.log(`[Deployer] pm2 started ${appName} on port ${port}`);
 
     // Nginx 反向代理
@@ -134,7 +134,7 @@ server {
     execFileSync('sudo', ['cp', tmpPath, confPath]);
 
     // 启用站点 + 测试 + 重载
-    execFileSync('sudo', ['/bin/ln', '-sf', confPath, path.join(NGINX_ENABLED, `task-${subdomain}`)]);
+    execFileSync('sudo', ['/bin/ln', '-sf', confPath, NGINX_ENABLED + '/task-' + subdomain]);
     execFileSync('sudo', ['/usr/sbin/nginx', '-t']);
     execFileSync('sudo', ['/usr/sbin/nginx', '-s', 'reload']);
     console.log(`[Deployer] Nginx configured for ${subdomain}`);

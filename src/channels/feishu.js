@@ -6,6 +6,8 @@ const fs = require("fs");
 const path = require("path");
 const { execFile: execFileCb } = require("child_process");
 const { promisify } = require("util");
+const https = require("https");
+const http = require("http");
 const execFileAsync = promisify(execFileCb);
 
 const STALE_THRESHOLD_MS = 30 * 1000;
@@ -365,6 +367,13 @@ class FeishuAdapter {
         return this._cardResponse(this._buildSessionCard(chatId, '已结束当前会话'), '会话已结束');
       }
 
+      if (actionType === 'switch_session') {
+        const targetSessionId = actionValue.targetSessionId;
+        if (!targetSessionId) return { toast: { type: 'error', content: '无效的会话 ID' } };
+        await this.gateway.switchSession(chatId, targetSessionId);
+        return this._cardResponse(this._buildSessionCard(chatId, '已切换到历史会话'), '已切换');
+      }
+
       if (actionType === 'refresh_status') {
         return this._cardResponse(this._buildStatusCard());
       }
@@ -384,6 +393,39 @@ class FeishuAdapter {
           this._runGatewayTaskAsync(chatId, instruction);
           const preview = instruction.length > 30 ? instruction.slice(0, 30) + '…' : instruction;
           return { toast: { type: 'success', content: `收到，开始执行：${preview}` } };
+        }
+        if (action.form_value?.session_name !== undefined) {
+          const name = action.form_value.session_name.trim();
+          this.session.setName(chatId, name);
+          const msg = name ? `会话已命名为「${name}」` : '已清除会话名称';
+          return this._cardResponse(this._buildSessionCard(chatId, msg), msg);
+        }
+        if (action.form_value?.memory_content !== undefined) {
+          const content = action.form_value.memory_content.trim();
+          if (!content) return { toast: { type: 'error', content: '请输入要记住的内容' } };
+          await this.memory.saveManual(content, chatId);
+          const preview = content.length > 20 ? content.slice(0, 20) + '…' : content;
+          return { toast: { type: 'success', content: `已记住：${preview}` } };
+        }
+        if (action.form_value?.search_query !== undefined) {
+          const query = action.form_value.search_query.trim();
+          if (!query) return { toast: { type: 'error', content: '请输入搜索关键词' } };
+          const results = await this.memory.retrieveRelevantMemories(query, chatId);
+          const convs = results.recentConversations;
+          if (convs.length === 0) {
+            return { toast: { type: 'info', content: '未找到相关记忆' } };
+          }
+          const lines = convs.map((c, i) => {
+            const date = c.endTime?.split('T')[0] || '未知';
+            const intent = c.summary?.userIntent || '未知意图';
+            return `${i + 1}. **[${date}]** ${intent}`;
+          });
+          await this._sendCardToChat(chatId, {
+            config: { wide_screen_mode: true },
+            header: { title: { tag: 'plain_text', content: `记忆搜索：${query}` }, template: 'wathet' },
+            elements: [{ tag: 'markdown', content: `找到 ${convs.length} 条相关记忆：\n\n${lines.join('\n')}` }],
+          });
+          return { toast: { type: 'info', content: `找到 ${convs.length} 条相关记忆` } };
         }
         return { toast: { type: 'error', content: '请输入内容' } };
       }
@@ -423,6 +465,7 @@ class FeishuAdapter {
   _buildSessionCard(chatId, notice) {
     const sessionId = this.session.get(chatId);
     const sessionInfo = this.session.sessions[chatId];
+    const history = this.session.getHistory(chatId);
     const elements = [];
 
     if (notice) {
@@ -430,40 +473,79 @@ class FeishuAdapter {
       elements.push({ tag: 'hr' });
     }
 
-    // 说明
-    elements.push({ tag: 'markdown', content: '**什么是会话？**\n会话保存对话的上下文，让 Jarvis 记住当前轮次的内容。上下文越大回复越慢；遇到话题切换或响应变慢时，可以新建会话重置上下文。' });
+    elements.push({ tag: 'markdown', content: '会话保存对话上下文，上下文越大回复越慢。话题切换或响应变慢时可新建会话。' });
     elements.push({ tag: 'hr' });
 
-    // 当前状态
+    // 当前会话信息 + 命名表单
     if (sessionId) {
       const size = this.gateway._getSessionSize(sessionId);
-      const age = sessionInfo?.updatedAt
-        ? Math.round((Date.now() - sessionInfo.updatedAt) / 60000)
-        : 0;
+      const age = sessionInfo?.updatedAt ? Math.round((Date.now() - sessionInfo.updatedAt) / 60000) : 0;
       const sizeKB = (size / 1024).toFixed(0);
       const ageText = age < 60 ? `${age} 分钟前` : `${Math.floor(age / 60)} 小时前`;
-      elements.push({ tag: 'markdown', content: `**当前会话** \`${sessionId.substring(0, 8)}...\`\n上下文大小：${sizeKB} KB　·　最近活动：${ageText}` });
+      const nameLabel = sessionInfo?.name ? `「${sessionInfo.name}」 ` : '';
+      elements.push({ tag: 'markdown', content: `**当前会话** ${nameLabel}\`${sessionId.substring(0, 8)}...\`\n上下文：${sizeKB} KB　·　活动：${ageText}` });
       elements.push({
-        tag: 'action',
-        actions: [
-          { tag: 'button', text: { tag: 'plain_text', content: '新建会话（清空上下文）' }, type: 'primary', value: { action: 'create_session' } },
-          { tag: 'button', text: { tag: 'plain_text', content: '结束会话' }, type: 'danger', value: { action: 'end_session' } },
+        tag: 'form',
+        name: 'rename_form',
+        elements: [
+          {
+            tag: 'input',
+            name: 'session_name',
+            placeholder: { tag: 'plain_text', content: '给这个会话起个名字...' },
+            default_value: sessionInfo?.name || '',
+            width: 'fill',
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '更新名称' },
+            type: 'default',
+            action_type: 'form_submit',
+            name: 'submit_rename',
+          },
         ],
       });
     } else {
       elements.push({ tag: 'markdown', content: '**无活跃会话**\n下次发消息时将自动创建新会话。' });
-      elements.push({
-        tag: 'action',
-        actions: [
-          { tag: 'button', text: { tag: 'plain_text', content: '新建会话' }, type: 'primary', value: { action: 'create_session' } },
-        ],
-      });
     }
 
+    elements.push({ tag: 'hr' });
+
+    // 历史会话列表
+    if (history.length > 0) {
+      elements.push({ tag: 'markdown', content: '**历史会话**' });
+      for (const h of history.slice(0, 5)) {
+        const label = h.name || h.sessionId.substring(0, 8) + '...';
+        const endDate = new Date(h.endedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        elements.push({
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: `${label} · ${endDate}` },
+              type: 'default',
+              value: { action: 'switch_session', targetSessionId: h.sessionId },
+            },
+          ],
+        });
+      }
+    } else {
+      elements.push({ tag: 'markdown', content: '**历史会话**\n暂无历史会话' });
+    }
+
+    elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'action',
+      actions: [
+        { tag: 'button', text: { tag: 'plain_text', content: '新建会话（清空上下文）' }, type: 'primary', value: { action: 'create_session' } },
+        { tag: 'button', text: { tag: 'plain_text', content: '结束会话' }, type: 'danger', value: { action: 'end_session' } },
+      ],
+    });
+
     return {
+      schema: '2.0',
       config: { wide_screen_mode: true },
       header: { title: { tag: 'plain_text', content: '会话管理' }, template: 'blue' },
-      elements,
+      body: { elements },
     };
   }
 
@@ -586,34 +668,64 @@ class FeishuAdapter {
     const stats = this.memory.getStats();
     const m = this.metrics.summarize(7);
 
-    const lines = [
-      "**短期记忆**",
-      "- 对话数量: " + stats.shortTerm.totalConversations,
-      "- 标签数量: " + stats.shortTerm.tagCount,
-      "- 实体数量: " + stats.shortTerm.entityCount,
-      "- 最早对话: " + (stats.shortTerm.oldestConversation ? stats.shortTerm.oldestConversation.split("T")[0] : "无"),
-      "",
-      "**活跃追踪**",
-      "- 进行中对话: " + stats.activeConversations,
-      "",
-      "**归档层**",
-      "- 归档天数: " + (stats.archive ? stats.archive.days : 0),
-      "- 归档文件: " + (stats.archive ? stats.archive.totalFiles : 0),
+    const statLines = [
+      `短期记忆 ${stats.shortTerm.totalConversations} 条 · 实体 ${stats.shortTerm.entityCount} 个 · 进行中 ${stats.activeConversations} 个`,
     ];
-
     if (m.total > 0) {
-      lines.push("", "**最近 7 天指标**");
-      lines.push("- 对话数: " + m.total + " (命中率: " + (m.hitRate * 100).toFixed(0) + "%)");
-      lines.push("- 检索延迟: " + m.avgRetrievalMs + "ms");
-      lines.push("- 上下文效率: " + (m.contextEfficiency * 100).toFixed(1) + "%");
-      lines.push("- 平均回复: " + (m.avgResponseBytes / 1024).toFixed(1) + "KB");
-      if (m.avgMemoryAgeDays !== null) lines.push("- 记忆新鲜度: " + m.avgMemoryAgeDays + " 天");
+      statLines.push(`7天 ${m.total} 次对话 · 命中率 ${(m.hitRate * 100).toFixed(0)}% · 检索 ${m.avgRetrievalMs}ms`);
     }
 
     return {
+      schema: '2.0',
       config: { wide_screen_mode: true },
-      header: { title: { tag: "plain_text", content: "记忆系统状态" }, template: "wathet" },
-      elements: [{ tag: "markdown", content: lines.join("\n") }],
+      header: { title: { tag: 'plain_text', content: '记忆系统' }, template: 'wathet' },
+      body: {
+        elements: [
+          { tag: 'markdown', content: statLines.join('\n') },
+          { tag: 'hr' },
+          {
+            tag: 'form',
+            name: 'memory_save_form',
+            elements: [
+              {
+                tag: 'input',
+                name: 'memory_content',
+                label: { tag: 'plain_text', content: '记住' },
+                placeholder: { tag: 'plain_text', content: '记住：下周一有产品评审...' },
+                width: 'fill',
+              },
+              {
+                tag: 'button',
+                text: { tag: 'plain_text', content: '记住' },
+                type: 'primary',
+                action_type: 'form_submit',
+                name: 'submit_memory_save',
+              },
+            ],
+          },
+          { tag: 'hr' },
+          {
+            tag: 'form',
+            name: 'memory_search_form',
+            elements: [
+              {
+                tag: 'input',
+                name: 'search_query',
+                label: { tag: 'plain_text', content: '搜索' },
+                placeholder: { tag: 'plain_text', content: '搜索：关于 nginx 的配置...' },
+                width: 'fill',
+              },
+              {
+                tag: 'button',
+                text: { tag: 'plain_text', content: '搜索' },
+                type: 'default',
+                action_type: 'form_submit',
+                name: 'submit_memory_search',
+              },
+            ],
+          },
+        ],
+      },
     };
   }
 
@@ -703,16 +815,16 @@ class FeishuAdapter {
     return {
       config: { wide_screen_mode: true },
       header: {
-        title: { tag: 'plain_text', content: 'Jarvis 指令中心' },
+        title: { tag: 'plain_text', content: `${process.env.BOT_NAME || 'OpenMist'} 指令中心` },
         template: 'indigo',
       },
       elements: [
-        { tag: 'markdown', content: '点击按钮直接打开对应功能。也可以直接发文字、图片或文件与 Jarvis 对话。' },
+        { tag: 'markdown', content: `点击按钮直接打开对应功能。也可以直接发文字、图片或文件与 ${process.env.BOT_NAME || 'OpenMist'} 对话。` },
         { tag: 'hr' },
         { tag: 'markdown', content: `**🔨 构建项目** \`/build\`\n生成网页或应用，自动部署到 ${process.env.TASK_DOMAIN || 'your-domain.com'} 子域名\n适合：游戏、工具页、数据展示、静态或 Node.js 项目` },
         { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'build' } }] },
         { tag: 'hr' },
-        { tag: 'markdown', content: '**⚡ 执行任务** `/task`\n让 Jarvis 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行' },
+        { tag: 'markdown', content: `**⚡ 执行任务** \`/task\`\n让 ${process.env.BOT_NAME || 'OpenMist'} 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行` },
         { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'task' } }] },
         { tag: 'hr' },
         { tag: 'markdown', content: '**💬 会话管理** `/session`　　**📊 系统状态** `/status`　　**📋 消息日志** `/log`' },
@@ -820,7 +932,12 @@ class FeishuAdapter {
     try {
       const chunks = this._splitMessage(text, 3500);
       for (const chunk of chunks) {
-        const formatted = this.formatter.format(chunk);
+        let formatted = this.formatter.format(chunk);
+
+        if (formatted.pendingImages && formatted.pendingImages.length > 0) {
+          formatted = await this._resolvePendingImages(formatted);
+        }
+
         await this.client.im.message.reply({
           path: { message_id: messageId },
           data: {
@@ -867,7 +984,12 @@ class FeishuAdapter {
     try {
       const chunks = this._splitMessage(text, 3500);
       for (const chunk of chunks) {
-        const formatted = this.formatter.format(chunk);
+        let formatted = this.formatter.format(chunk);
+
+        if (formatted.pendingImages && formatted.pendingImages.length > 0) {
+          formatted = await this._resolvePendingImages(formatted);
+        }
+
         await this.client.im.message.create({
           data: {
             receive_id: chatId,
@@ -890,6 +1012,134 @@ class FeishuAdapter {
       });
     } catch (err) {
       console.warn("[Feishu] Reaction failed:", emojiType, err.message?.substring(0, 80));
+    }
+  }
+
+  // ==================== 图片处理（AI 回复中的图片） ====================
+
+  /**
+   * 处理格式化结果中的待上传图片：下载 → 上传飞书 → 替换占位符
+   */
+  async _resolvePendingImages(formatted) {
+    let contentStr = formatted.content;
+
+    for (let i = 0; i < formatted.pendingImages.length; i++) {
+      const img = formatted.pendingImages[i];
+      const placeholder = `__PENDING_IMG_${i}__`;
+
+      try {
+        const imageKey = await this._downloadAndUploadImage(img.url);
+        if (imageKey) {
+          contentStr = contentStr.replace(placeholder, imageKey);
+        } else {
+          contentStr = this._replaceImgWithFallback(contentStr, placeholder, img);
+        }
+      } catch (err) {
+        console.warn(`[Feishu] Image processing failed: ${err.message}`);
+        contentStr = this._replaceImgWithFallback(contentStr, placeholder, img);
+      }
+    }
+
+    return { msg_type: formatted.msg_type, content: contentStr };
+  }
+
+  /**
+   * 上传图片到飞书，支持本地路径和远程 URL
+   * - file:///path/to/image.png → 直接读本地文件上传
+   * - /path/to/image.png → 直接读本地文件上传
+   * - https://... → 先下载再上传
+   */
+  async _downloadAndUploadImage(imageUrl) {
+    let localPath = null;
+    let needCleanup = false;
+
+    try {
+      // 本地文件：file:// 协议或绝对路径
+      if (imageUrl.startsWith('file://')) {
+        localPath = imageUrl.replace('file://', '');
+      } else if (imageUrl.startsWith('/')) {
+        localPath = imageUrl;
+      }
+
+      if (localPath) {
+        if (!fs.existsSync(localPath)) {
+          throw new Error(`Local file not found: ${localPath}`);
+        }
+        console.log(`[Feishu] Uploading local image: ${localPath} (${(fs.statSync(localPath).size / 1024).toFixed(0)}KB)`);
+      } else {
+        // 远程 URL：先下载到临时文件
+        localPath = path.join(MEDIA_DIR, `tmp-upload-${Date.now()}.img`);
+        needCleanup = true;
+        const buffer = await this._downloadFromUrl(imageUrl);
+        fs.writeFileSync(localPath, buffer);
+        console.log(`[Feishu] Image downloaded: ${(buffer.length / 1024).toFixed(0)}KB from ${imageUrl.substring(0, 80)}`);
+      }
+
+      // 上传到飞书
+      const uploadResp = await this.client.im.image.create({
+        data: {
+          image_type: 'message',
+          image: fs.createReadStream(localPath),
+        },
+      });
+
+      const imageKey = uploadResp?.image_key || uploadResp?.data?.image_key;
+      if (imageKey) {
+        console.log(`[Feishu] Image uploaded to Feishu: ${imageKey}`);
+      }
+      return imageKey;
+    } finally {
+      if (needCleanup) {
+        try { fs.unlinkSync(localPath); } catch {}
+      }
+    }
+  }
+
+  /**
+   * 从 URL 下载文件，支持重定向
+   */
+  _downloadFromUrl(url, redirectCount = 0) {
+    if (redirectCount > 5) return Promise.reject(new Error('Too many redirects'));
+
+    return new Promise((resolve, reject) => {
+      const client = url.startsWith('https') ? https : http;
+      const request = client.get(url, { timeout: 15000 }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          this._downloadFromUrl(res.headers.location, redirectCount + 1).then(resolve, reject);
+          return;
+        }
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode}`));
+          return;
+        }
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      });
+      request.on('error', reject);
+      request.on('timeout', () => {
+        request.destroy();
+        reject(new Error('Download timeout'));
+      });
+    });
+  }
+
+  /**
+   * 图片上传失败时，将 img 元素替换为 markdown 链接作为降级方案
+   */
+  _replaceImgWithFallback(contentStr, placeholder, img) {
+    try {
+      const card = JSON.parse(contentStr);
+      card.elements = card.elements.map(el => {
+        if (el.tag === 'img' && el.img_key === placeholder) {
+          return { tag: 'markdown', content: `[${img.alt || '图片'}](${img.url})` };
+        }
+        return el;
+      });
+      return JSON.stringify(card);
+    } catch {
+      return contentStr.replace(`"${placeholder}"`, '""');
     }
   }
 
@@ -1008,6 +1258,176 @@ class FeishuAdapter {
     } catch (err) {
       try { fs.unlinkSync(thumbPath); } catch {}
       throw err;
+    }
+  }
+
+  // ==================== 消息扩展能力 ====================
+
+  /**
+   * 编辑已发送的消息内容（仅支持文本和富文本）
+   */
+  async editMessage(messageId, newContent, msgType = 'text') {
+    try {
+      const content = msgType === 'text'
+        ? JSON.stringify({ text: newContent })
+        : newContent;
+      await this.client.im.message.update({
+        path: { message_id: messageId },
+        data: { content, msg_type: msgType },
+      });
+      console.log(`[Feishu] Message edited: ${messageId}`);
+      return true;
+    } catch (err) {
+      console.error(`[Feishu] Edit message failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 撤回消息
+   */
+  async recallMessage(messageId) {
+    try {
+      await this.client.im.message.delete({
+        path: { message_id: messageId },
+      });
+      console.log(`[Feishu] Message recalled: ${messageId}`);
+      return true;
+    } catch (err) {
+      console.error(`[Feishu] Recall message failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 转发消息到指定聊天
+   */
+  async forwardMessage(messageId, receiverId, receiveIdType = 'chat_id') {
+    try {
+      const resp = await this.client.im.message.forward({
+        path: { message_id: messageId },
+        data: { receive_id: receiverId },
+        params: { receive_id_type: receiveIdType },
+      });
+      const newMsgId = resp?.message_id || resp?.data?.message_id;
+      console.log(`[Feishu] Message forwarded: ${messageId} → ${receiverId} (new: ${newMsgId})`);
+      return newMsgId;
+    } catch (err) {
+      console.error(`[Feishu] Forward message failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * 查询消息已读状态
+   */
+  async getReadUsers(messageId) {
+    try {
+      const items = [];
+      let pageToken;
+      do {
+        const params = { user_id_type: 'open_id', page_size: 100 };
+        if (pageToken) params.page_token = pageToken;
+        const resp = await this.client.im.message.readUsers({
+          path: { message_id: messageId },
+          params,
+        });
+        const data = resp?.data || resp;
+        if (data?.items) items.push(...data.items);
+        pageToken = data?.page_token;
+      } while (pageToken);
+      console.log(`[Feishu] Read users for ${messageId}: ${items.length}`);
+      return { readCount: items.length, users: items };
+    } catch (err) {
+      console.error(`[Feishu] Get read users failed: ${err.message}`);
+      return { readCount: 0, users: [] };
+    }
+  }
+
+  /**
+   * 获取聊天历史消息
+   */
+  async getChatHistory(chatId, { startTime, endTime, pageSize = 20, pageToken } = {}) {
+    try {
+      const params = {
+        container_id_type: 'chat',
+        container_id: chatId,
+        sort_type: 'ByCreateTimeDesc',
+        page_size: pageSize,
+      };
+      if (startTime) params.start_time = String(startTime);
+      if (endTime) params.end_time = String(endTime);
+      if (pageToken) params.page_token = pageToken;
+
+      const resp = await this.client.im.message.list({ params });
+      const data = resp?.data || resp;
+      const messages = (data?.items || []).map(m => ({
+        messageId: m.message_id,
+        msgType: m.msg_type,
+        createTime: m.create_time,
+        senderId: m.sender?.id,
+        content: m.body?.content,
+      }));
+      console.log(`[Feishu] Chat history for ${chatId}: ${messages.length} messages`);
+      return { messages, hasMore: data?.has_more, pageToken: data?.page_token };
+    } catch (err) {
+      console.error(`[Feishu] Get chat history failed: ${err.message}`);
+      return { messages: [], hasMore: false };
+    }
+  }
+
+  /**
+   * Pin 消息
+   */
+  async pinMessage(messageId) {
+    try {
+      await this.client.im.pin.create({
+        data: { message_id: messageId },
+      });
+      console.log(`[Feishu] Message pinned: ${messageId}`);
+      return true;
+    } catch (err) {
+      console.error(`[Feishu] Pin message failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 取消 Pin 消息
+   */
+  async unpinMessage(messageId) {
+    try {
+      await this.client.im.pin.delete({
+        path: { message_id: messageId },
+      });
+      console.log(`[Feishu] Message unpinned: ${messageId}`);
+      return true;
+    } catch (err) {
+      console.error(`[Feishu] Unpin message failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 获取群内 Pin 消息列表
+   */
+  async getPinnedMessages(chatId) {
+    try {
+      const items = [];
+      let pageToken;
+      do {
+        const params = { chat_id: chatId, page_size: 50 };
+        if (pageToken) params.page_token = pageToken;
+        const resp = await this.client.im.pin.list({ params });
+        const data = resp?.data || resp;
+        if (data?.items) items.push(...data.items);
+        pageToken = data?.page_token;
+      } while (pageToken);
+      console.log(`[Feishu] Pinned messages in ${chatId}: ${items.length}`);
+      return items;
+    } catch (err) {
+      console.error(`[Feishu] Get pinned messages failed: ${err.message}`);
+      return [];
     }
   }
 

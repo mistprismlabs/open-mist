@@ -375,7 +375,7 @@ class WeComAdapter {
         '',
         '# 九、链接与分隔',
         '',
-        `相关链接：[项目主页](https://${process.env.TASK_DOMAIN || 'your-domain.com'}) · [企微开发文档](https://developer.work.weixin.qq.com)`,
+        `相关链接：[${process.env.BOT_NAME || 'OpenMist'} 主页](${process.env.SITE_BASE_URL || ''}) · [企微开发文档](https://developer.work.weixin.qq.com)`,
         '',
         '---',
         '',
@@ -444,7 +444,7 @@ class WeComAdapter {
         card_type: 'button_interaction',
         main_title: { title: notice || '会话管理', desc: descText },
         task_id: 'wecom-session',
-        card_action: { type: 1, url: `https://${process.env.TASK_DOMAIN || 'your-domain.com'}` },
+        card_action: { type: 1, url: process.env.SITE_BASE_URL || '' },
         button_list: [
           { text: '新建会话', key: 'create_session', type: 1, style: 3 },
           { text: '结束会话', key: 'end_session', type: 1, style: 2 },

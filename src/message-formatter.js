@@ -24,14 +24,27 @@ class MessageFormatter {
     const { title, body } = this._extractTitle(text);
     const segments = this._parseSegments(body);
     const elements = [];
+    const pendingImages = [];
 
     for (const seg of segments) {
       if (seg.type === 'hr') {
         elements.push({ tag: 'hr' });
       } else if (seg.type === 'table') {
         elements.push(this._buildNativeTable(seg.headers, seg.alignments, seg.dataRows));
+      } else if (seg.type === 'image') {
+        const imgIndex = pendingImages.length;
+        pendingImages.push({ url: seg.url, alt: seg.alt });
+        elements.push({
+          tag: 'img',
+          img_key: `__PENDING_IMG_${imgIndex}__`,
+          alt: { tag: 'plain_text', content: seg.alt || '图片' },
+          mode: 'fit_horizontal',
+          preview: true,
+        });
       } else if (seg.content.trim()) {
-        elements.push({ tag: 'markdown', content: seg.content.trim() });
+        // 将内联图片语法转为链接（飞书 markdown 不支持图片语法）
+        const cleaned = seg.content.trim().replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '[$1]($2)');
+        elements.push({ tag: 'markdown', content: cleaned });
       }
     }
 
@@ -39,7 +52,7 @@ class MessageFormatter {
       elements.push({ tag: 'markdown', content: body || text });
     }
 
-    return {
+    const result = {
       msg_type: 'interactive',
       content: JSON.stringify({
         config: { wide_screen_mode: true },
@@ -50,6 +63,12 @@ class MessageFormatter {
         elements,
       }),
     };
+
+    if (pendingImages.length > 0) {
+      result.pendingImages = pendingImages;
+    }
+
+    return result;
   }
 
   _extractTitle(text) {
@@ -97,6 +116,15 @@ class MessageFormatter {
         const result = this._consumeTable(lines, i);
         segments.push(result.segment);
         i = result.nextIndex;
+        continue;
+      }
+
+      // 独立图片行: ![alt](url)
+      const imageMatch = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)\s*$/);
+      if (imageMatch) {
+        flush();
+        segments.push({ type: 'image', alt: imageMatch[1], url: imageMatch[2] });
+        i++;
         continue;
       }
 

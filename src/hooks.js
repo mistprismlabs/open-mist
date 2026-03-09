@@ -65,7 +65,7 @@ const BASH_BLOCKED = [
   /truncate\s+table/i,
 ];
 
-// Write/Edit: 允许写入的路径（基于项目目录动态生成）
+// Write/Edit: 允许写入的路径
 const PROJECT_ROOT = process.env.PROJECT_DIR || path.resolve(__dirname, '..');
 const SITES_ROOT = process.env.SITES_DIR || path.join(path.dirname(PROJECT_ROOT), 'sites');
 const escapedProject = PROJECT_ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -281,7 +281,41 @@ const preCompactHook = async (input) => {
 };
 
 // ============================================================
-// 6. 导出
+// 6. 工具失败处理（PostToolUseFailure）
+// ============================================================
+
+const failureLogger = async (input) => {
+  if (input.hook_event_name !== "PostToolUseFailure") return {};
+
+  const sessionId = input.session_id;
+  const toolName = input.tool_name;
+  const error = String(input.error || "unknown error");
+
+  // 审计日志
+  const entry = {
+    ts: new Date().toISOString(),
+    tool: toolName,
+    input: JSON.stringify(input.tool_input || {}).substring(0, 200),
+    error: error.substring(0, 300),
+    status: "failed",
+    sessionId,
+  };
+  fs.appendFileSync(AUDIT_LOG, JSON.stringify(entry) + "\n");
+
+  // 填充 executionLogs（供 gateway 消费）
+  if (!executionLogs.has(sessionId)) executionLogs.set(sessionId, []);
+  executionLogs.get(sessionId).push({
+    tool: toolName,
+    error: error.substring(0, 200),
+    ts: new Date().toISOString(),
+  });
+
+  console.warn(`[Hooks] Tool failed: ${toolName} — ${error.substring(0, 100)}`);
+  return {};
+};
+
+// ============================================================
+// 7. 导出
 // ============================================================
 
 function setPostToolUseCallback(fn) { onPostToolUse = fn; }
@@ -291,6 +325,7 @@ function setPreCompactCallback(fn) { onPreCompact = fn; }
 const hooks = {
   PreToolUse: [{ hooks: [securityGuard] }],
   PostToolUse: [{ hooks: [auditLogger, errorCollector, toolUseTracker] }],
+  PostToolUseFailure: [{ hooks: [failureLogger] }],
   Stop: [{ hooks: [sessionEndHook] }],
   PreCompact: [{ hooks: [preCompactHook] }],
 };

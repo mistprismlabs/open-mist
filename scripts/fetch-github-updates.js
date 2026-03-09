@@ -182,7 +182,7 @@ async function ensureBitable() {
     console.warn("[bitable] 权限设置失败（可忽略）:", e.message);
   }
 
-  const url = `https://feishu.cn/base/${appToken}?table=${tableId}`;
+  const url = `https://mistprism.feishu.cn/base/${appToken}?table=${tableId}`;
   const result = { app_token: appToken, table_id: tableId, url };
   saveJSON(CONFIG_PATH, result);
   console.log("[bitable] 创建完成:", url);

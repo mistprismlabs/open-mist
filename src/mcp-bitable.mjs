@@ -6,11 +6,11 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
-// Load .env from project root directory (quiet: suppress stdout noise)
+// Load .env from jarvis-gateway directory (quiet: suppress stdout noise)
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, "..", ".env"), quiet: true });
 
-const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID;
+const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID || "";
 
 // Create Lark client (loggerLevel: error to suppress stdout noise)
 const client = new lark.Client({
@@ -278,7 +278,7 @@ server.tool(
       const data = {
         summary,
         origin: {
-          platform_i18n_name: '{"zh_cn": "Jarvis", "en_us": "Jarvis"}',
+          platform_i18n_name: `{"zh_cn": "${process.env.BOT_NAME || 'OpenMist'}", "en_us": "${process.env.BOT_NAME || 'OpenMist'}"}` ,
         },
         collaborator_ids: [OWNER_OPEN_ID],
       };

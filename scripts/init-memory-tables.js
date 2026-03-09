@@ -23,7 +23,7 @@ const client = new lark.Client({
   domain: lark.Domain.Feishu,
 });
 
-const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID;
+const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID || '';
 
 /**
  * 授权访问

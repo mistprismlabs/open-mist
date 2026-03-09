@@ -4,13 +4,17 @@ import { z } from "zod";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { readdir, stat, unlink } from "fs/promises";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
 const execFileAsync = promisify(execFile);
 
-const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || join(process.cwd(), "downloads");
-const BASE_URL = process.env.DOWNLOADS_BASE_URL || "http://localhost/downloads";
-const YT_DLP = process.env.YT_DLP_PATH || "yt-dlp";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || join(__dirname, '..', 'downloads');
+const BASE_URL = process.env.DOWNLOADS_BASE_URL || '';
+const YT_DLP = process.env.YT_DLP_PATH || 'yt-dlp';
 const MAX_AGE_DAYS = 7;
 
 const server = new McpServer({

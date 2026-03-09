@@ -5,8 +5,8 @@ import COS from "cos-nodejs-sdk-v5";
 import { readFileSync } from "fs";
 import { basename } from "path";
 
-const BUCKET = process.env.COS_BUCKET;
-const REGION = process.env.COS_REGION;
+const BUCKET = process.env.COS_BUCKET || "";
+const REGION = process.env.COS_REGION || 'ap-hongkong';
 
 const cos = new COS({
   SecretId: process.env.COS_SECRET_ID,

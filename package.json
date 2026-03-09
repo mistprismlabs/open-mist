@@ -1,14 +1,14 @@
 {
-  "name": "open-mist",
+  "name": "jarvis-gateway",
   "version": "1.0.0",
-  "description": "Production-grade Claude Agent SDK gateway with multi-channel IM integration, hybrid memory, and self-healing",
-  "main": "src/index.js",
+  "description": "",
+  "main": "index.js",
   "scripts": {
     "start": "node src/index.js"
   },
-  "keywords": ["claude", "agent-sdk", "gateway", "feishu", "mcp", "llm"],
-  "author": "chituhouse",
-  "license": "MIT",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.33",

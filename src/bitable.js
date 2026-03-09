@@ -1,6 +1,6 @@
 const lark = require("@larksuiteoapi/node-sdk");
 
-const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID;
+const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID || "";
 
 class BitableLogger {
   constructor() {

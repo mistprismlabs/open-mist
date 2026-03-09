@@ -8,7 +8,8 @@ const { TaskExecutor } = require('./task-executor');
 const { Deployer } = require('./deployer');
 
 async function main() {
-  console.log('[Jarvis] Starting gateway...');
+  const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
+  console.log(`[${BOT_NAME}] Starting gateway...`);
 
   const gateway = new Gateway({
     session: new SessionStore(),
@@ -31,10 +32,11 @@ async function main() {
     await wecom.start();
   }
 
-  console.log('[Jarvis] Gateway running ✓');
+  console.log(`[${BOT_NAME}] Gateway running ✓`);
 }
 
 main().catch(err => {
-  console.error('[Jarvis] Fatal error:', err);
+  const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
+  console.error(`[${BOT_NAME}] Fatal error:`, err);
   process.exit(1);
 });

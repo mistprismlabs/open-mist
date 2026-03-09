@@ -2,7 +2,8 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
-const TASKS_DIR = process.env.TASKS_DIR || path.join(process.cwd(), 'tasks');
+const PROJECT_DIR = process.env.PROJECT_DIR || path.resolve(__dirname, '..');
+const TASKS_DIR = process.env.TASKS_DIR || path.join(PROJECT_DIR, 'data/tasks');
 const MAX_BUDGET_USD = parseFloat(process.env.TASK_MAX_BUDGET_USD || '2.0');
 const MAX_TURNS = 50;
 

@@ -7,8 +7,8 @@ const path = require('path');
 
 const INTERVAL = 30 * 60 * 1000; // 30 分钟
 const TIMEOUT = 300_000;          // 单次 Claude 巡检最多 5 分钟
-const PROJECT_DIR = process.env.PROJECT_DIR || path.resolve(__dirname, '..');
-const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude';
+const PROJECT_DIR = process.env.PROJECT_DIR || '/home/jarvis/jarvis-gateway';
+const CLAUDE_BIN = process.env.CLAUDE_BIN || '/home/jarvis/.local/bin/claude';
 const LOG_FILE = path.join(PROJECT_DIR, 'logs/heartbeat.log');
 
 // 孤儿进程特征：ppid=1 且命令匹配以下模式（SSH 遗留 / 卡死进程）
@@ -70,13 +70,19 @@ function cleanOrphans() {
 }
 
 /**
- * 扫描最近 300 行 feishu-bot 日志，统计错误模式
+ * 扫描最近 40 分钟内的 feishu-bot 日志，统计错误模式
+ * 用时间戳过滤而非固定行数，避免历史错误反复触发告警
  */
 function scanRecentLogs() {
   const logPath = path.join(PROJECT_DIR, 'logs/feishu-bot.log');
   if (!fs.existsSync(logPath)) return { errors: 0, permErrors: 0 };
   try {
-    const recent = fs.readFileSync(logPath, 'utf-8').split('\n').slice(-300);
+    const cutoff = Date.now() - 40 * 60 * 1000; // 40 分钟（略大于巡检间隔 30 分钟）
+    const lines = fs.readFileSync(logPath, 'utf-8').split('\n').slice(-500);
+    const recent = lines.filter(l => {
+      const m = l.match(/\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+      return m && new Date(m[1]).getTime() > cutoff;
+    });
     const errors = recent.filter(l => /\[ERROR\]|Error:/.test(l)).length;
     const permErrors = recent.filter(l => /EACCES|permission denied/i.test(l)).length;
     return { errors, permErrors };
@@ -108,9 +114,8 @@ function checkMemory() {
 function checkFilePermissions() {
   const alerts = [];
   try {
-    const badFiles = execFileSync(
-      'find', [path.join(PROJECT_DIR, 'data'), '-not', '-user', 'jarvis', '-type', 'f'],
-      { encoding: 'utf8', timeout: 5_000, stdio: ['pipe', 'pipe', 'ignore'] }
+    const badFiles = execFileSync('find', [PROJECT_DIR + '/data', '-not', '-user', 'jarvis', '-type', 'f'],
+      { encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] }
     ).trim();
     if (!badFiles) return alerts;
 
@@ -121,7 +126,7 @@ function checkFilePermissions() {
     // data/memory/ 下的文件：递归修复
     if (memoryFiles.length > 0) {
       try {
-        execFileSync('sudo', ['/usr/bin/chown', '-R', 'jarvis:jarvis', path.join(PROJECT_DIR, 'data/memory/')], { timeout: 5_000 });
+        execFileSync('sudo', ['/usr/bin/chown', '-R', 'jarvis:jarvis', PROJECT_DIR + '/data/memory/'], { timeout: 5_000 });
         alerts.push('[已修复] data/memory/ 权限异常并已修正（' + memoryFiles.length + '个文件）');
       } catch (e) {
         alerts.push('[告警] data/memory/ 权限修复失败: ' + e.message);
@@ -153,7 +158,7 @@ function checkVectorStoreWritable() {
     }
   } catch {
     try {
-      execFileSync('sudo', ['/usr/bin/chown', 'jarvis:jarvis', path.join(PROJECT_DIR, 'data/memory/vectors.db')], { timeout: 5_000 });
+      execFileSync('sudo', ['/usr/bin/chown', 'jarvis:jarvis', PROJECT_DIR + '/data/memory/vectors.db'], { timeout: 5_000 });
       alerts.push('[已修复] vectors.db 权限异常并已修正');
     } catch (e2) {
       alerts.push('[告警] vectors.db 不可写且修复失败: ' + e2.message);
@@ -216,6 +221,8 @@ function buildPrompt(native) {
   // ── 基础检查（每次都执行）──
   const checks = [
     'systemctl is-active feishu-bot.service',
+    'systemctl is-active xuanxue-api.service',
+    'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3721/api/health',
     'tail -50 logs/feishu-bot.log | grep -i "error\\|fatal" | tail -3',
     'df -h / | tail -1',
     'du -sh media/',
@@ -225,10 +232,10 @@ function buildPrompt(native) {
   // ── 时间窗口检查（cron 执行后检查对应日志）──
   const cronRules = [];
 
-  // 推荐管线（cron 6:00）→ 6:30~8:00 检查
+  // 选题推荐（cron 6:00）→ 6:30~8:00 检查
   if (hour >= 6 && hour <= 8) {
     checks.push('tail -8 logs/recommend.log');
-    cronRules.push('recommend.log: 出现ERROR/503/processed:0→推荐管线失败,告警并提示用户手动重跑');
+    cronRules.push('recommend.log: 出现ERROR/503/processed:0→选题推荐失败,告警并提示用户手动重跑');
   }
 
   // 资讯日报（cron 7:30）→ 8:00~9:30 检查
@@ -280,6 +287,7 @@ function buildPrompt(native) {
     (ctx.length ? '【原生检查】' + ctx.join('；') + '。' : '') +
     '【故障判定规则】' +
     'feishu-bot非active→sudo systemctl restart feishu-bot.service；' +
+    'xuanxue-api非active或health接口非200→sudo systemctl restart xuanxue-api.service；' +
     '磁盘>80%或media>1GB→告警；' +
     'fetch-hot.log: 出现ERROR或写入0条→热搜采集异常,告警；' +
     (cronRules.length ? cronRules.join('；') + '。' : '') +
@@ -290,13 +298,13 @@ function buildPrompt(native) {
     '可执行的修复操作：' +
     '(1) feishu-bot挂掉→sudo systemctl restart feishu-bot.service；' +
     '(2) cron脚本上次执行失败(日志显示Error/失败)→重跑一次: ' +
-    '热搜采集: cd ' + PROJECT_DIR + ' && node scripts/fetch-hot-to-bitable.js, ' +
-    '每日简报: cd ' + PROJECT_DIR + ' && node scripts/fetch-daily-briefing.js, ' +
-    'GitHub更新: cd ' + PROJECT_DIR + ' && node scripts/fetch-github-updates.js, ' +
-    '每日摘要: cd ' + PROJECT_DIR + ' && node scripts/export-daily-digest.js ' +
+    `热搜采集: cd ${PROJECT_DIR} && node scripts/fetch-hot-to-bitable.js, ` +
+    `每日简报: cd ${PROJECT_DIR} && node scripts/fetch-daily-briefing.js, ` +
+    `GitHub更新: cd ${PROJECT_DIR} && node scripts/fetch-github-updates.js, ` +
+    `每日摘要: cd ${PROJECT_DIR} && node scripts/export-daily-digest.js ` +
     '(注意: 推荐脚本orchestrator.js耗时长，只在6:00-7:00之间重跑)；' +
-    '(3) 磁盘>85%→执行 ' + PROJECT_DIR + '/scripts/cleanup-media.sh；' +
-    '(4) 文件权限异常→sudo chown -R jarvis:jarvis ' + PROJECT_DIR + '/data/memory/。' +
+    `(3) 磁盘>85%→执行 ${PROJECT_DIR}/scripts/cleanup-media.sh；` +
+    `(4) 文件权限异常→sudo chown -R jarvis:jarvis ${PROJECT_DIR}/data/memory/。` +
     '报告格式: 修复成功用"[已修复] xxx（原因: yyy）", 修复失败用"[需人工] xxx（尝试: yyy, 结果: zzz）", 一切正常只回复HEARTBEAT_OK或简洁正常状态';
 }
 

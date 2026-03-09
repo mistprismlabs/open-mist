@@ -7,8 +7,7 @@ const os = require('os');
 
 const SESSION_MAX_SIZE_MB = 10;
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-const PROJECT_DIR = process.env.PROJECT_DIR || path.resolve(__dirname, '..');
-const SESSION_DIR = process.env.CLAUDE_SESSION_DIR || path.join(os.homedir(), '.claude', 'projects', PROJECT_DIR.replace(/\//g, '-'));
+const SESSION_DIR = path.join(os.homedir(), '.claude', 'projects', '-home-jarvis-jarvis-gateway');
 
 class Gateway {
   constructor({ session, claude, memory }) {
@@ -228,6 +227,18 @@ class Gateway {
     }
 
     return [...entities].slice(0, 30);
+  }
+
+  /**
+   * 切换到历史会话（归档当前 → 恢复目标）
+   */
+  async switchSession(chatId, targetSessionId) {
+    const currentSessionId = this.session.get(chatId);
+    if (currentSessionId && currentSessionId !== targetSessionId) {
+      await this._endSession(currentSessionId);
+      this.session.archiveCurrent(chatId);
+    }
+    this.session.restore(chatId, targetSessionId);
   }
 
   async _endSession(sessionId) {

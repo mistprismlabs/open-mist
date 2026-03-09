@@ -12,7 +12,7 @@ const path = require("path");
 
 const { enqueue } = require('./notify-queue');
 const NOTIFY_CHAT_ID = process.env.NOTIFY_CHAT_ID;
-const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID;
+const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID || '';
 const DATA_DIR = path.join(__dirname, "..", "data");
 const CONFIG_PATH = path.join(DATA_DIR, "briefing-config.json");
 const UA = "Mozilla/5.0 (compatible; JarvisBriefing/1.0)";
