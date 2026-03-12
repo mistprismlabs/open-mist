@@ -23,9 +23,9 @@ async function loadSDK() {
   return _query;
 }
 
-const MCP_BITABLE_SERVER = {
+const MCP_FEISHU_SERVER = {
   command: process.env.MCP_NODE_PATH || process.execPath,
-  args: [process.env.MCP_BITABLE_PATH || __dirname + "/mcp-bitable.mjs"],
+  args: [process.env.MCP_FEISHU_PATH || __dirname + "/mcp-feishu.mjs"],
 };
 
 const MCP_VIDEO_SERVER = {
@@ -161,11 +161,11 @@ class ClaudeClient {
       maxTurns: 50,
       settingSources: ['project', 'user'],
       mcpServers: {
-        "feishu-bitable": MCP_BITABLE_SERVER,
+        "feishu": MCP_FEISHU_SERVER,
         "video-downloader": MCP_VIDEO_SERVER,
         "tencent-cos": MCP_COS_SERVER,
       },
-      allowedTools: ["Read", "Glob", "Grep", "TodoWrite", "Write", "Edit", "Bash", "mcp__feishu-bitable__*", "mcp__video-downloader__*", "mcp__tencent-cos__*"],
+      allowedTools: ["Read", "Glob", "Grep", "TodoWrite", "Write", "Edit", "Bash", "mcp__feishu__*", "mcp__video-downloader__*", "mcp__tencent-cos__*"],
       hooks,
     };
 
@@ -223,7 +223,8 @@ class ClaudeClient {
         if (message.type === 'system' && message.subtype === 'init') {
           resultSessionId = message.session_id;
           if (message.mcp_servers) {
-            console.log('[Claude] MCP servers:', Object.keys(message.mcp_servers).join(', '));
+            const serverInfo = Array.isArray(message.mcp_servers) ? message.mcp_servers.map(s => `${s.name}:${s.status}`) : Object.keys(message.mcp_servers);
+            console.log('[Claude] MCP servers:', serverInfo.join(', '));
           }
         }
         if (message.type === 'result') {

@@ -55,12 +55,13 @@ class MessageFormatter {
     const result = {
       msg_type: 'interactive',
       content: JSON.stringify({
-        config: { wide_screen_mode: true },
+        schema: '2.0',
+        config: { width_mode: 'fill' },
         header: {
           title: { tag: 'plain_text', content: title || 'Jarvis' },
           template: 'blue',
         },
-        elements,
+        body: { elements },
       }),
     };
 

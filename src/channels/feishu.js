@@ -346,6 +346,10 @@ class FeishuAdapter {
       const actionValue = action?.value || {};
       const actionType = actionValue.action;
       const chatId = data.context?.open_chat_id || data.open_chat_id;
+      if (!chatId) {
+        console.warn('[Feishu] Card action missing chatId:', JSON.stringify(data.context || {}).slice(0, 200));
+        return { toast: { type: 'error', content: '无法识别来源会话' } };
+      }
 
       console.log(`[Feishu] Card action: ${actionType} from chat ${chatId}`);
 
@@ -375,7 +379,14 @@ class FeishuAdapter {
       }
 
       if (actionType === 'refresh_status') {
-        return this._cardResponse(this._buildStatusCard());
+        return this._cardResponse(this._buildStatusCard(), '状态已刷新');
+      }
+
+      // select_static 回调（历史会话切换）
+      if (action.name === 'switch_session_select' && action.option) {
+        const targetSessionId = action.option;
+        await this.gateway.switchSession(chatId, targetSessionId);
+        return this._cardResponse(this._buildSessionCard(chatId, '已切换到历史会话'), '已切换');
       }
 
       if (action.action_type === 'form_submit') {
@@ -420,18 +431,16 @@ class FeishuAdapter {
             const intent = c.summary?.userIntent || '未知意图';
             return `${i + 1}. **[${date}]** ${intent}`;
           });
-          await this._sendCardToChat(chatId, {
-            config: { wide_screen_mode: true },
-            header: { title: { tag: 'plain_text', content: `记忆搜索：${query}` }, template: 'wathet' },
-            elements: [{ tag: 'markdown', content: `找到 ${convs.length} 条相关记忆：\n\n${lines.join('\n')}` }],
-          });
+          await this._sendCardToChat(chatId, this._createCard(`记忆搜索：${query}`, 'wathet', [
+            { tag: 'markdown', content: `找到 ${convs.length} 条相关记忆：\n\n${lines.join('\n')}` },
+          ]));
           return { toast: { type: 'info', content: `找到 ${convs.length} 条相关记忆` } };
         }
         return { toast: { type: 'error', content: '请输入内容' } };
       }
 
       if (actionType === 'open_command') {
-        const cmd = actionValue.cmd;
+        const cmd = actionValue.cmd || action.option;
         let card;
         if (cmd === 'build') card = this._buildBuildCard();
         else if (cmd === 'task') card = this._buildTaskCard();
@@ -448,7 +457,7 @@ class FeishuAdapter {
       return undefined;
     } catch (err) {
       console.error("[Feishu] Card action error:", err.message);
-      return undefined;
+      return { toast: { type: 'error', content: `操作失败：${err.message}` } };
     }
   }
 
@@ -461,6 +470,16 @@ class FeishuAdapter {
   }
 
   // ==================== 卡片构建 ====================
+
+  /** 创建标准 v2 卡片骨架 */
+  _createCard(title, template, elements) {
+    return {
+      schema: '2.0',
+      config: { width_mode: 'fill' },
+      header: { title: { tag: 'plain_text', content: title }, template },
+      body: { elements },
+    };
+  }
 
   _buildSessionCard(chatId, notice) {
     const sessionId = this.session.get(chatId);
@@ -513,40 +532,44 @@ class FeishuAdapter {
     // 历史会话列表
     if (history.length > 0) {
       elements.push({ tag: 'markdown', content: '**历史会话**' });
-      for (const h of history.slice(0, 5)) {
-        const label = h.name || h.sessionId.substring(0, 8) + '...';
-        const endDate = new Date(h.endedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        elements.push({
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: `${label} · ${endDate}` },
-              type: 'default',
-              value: { action: 'switch_session', targetSessionId: h.sessionId },
-            },
-          ],
-        });
-      }
+      elements.push({
+        tag: 'select_static',
+        name: 'switch_session_select',
+        placeholder: { tag: 'plain_text', content: '选择历史会话...' },
+        options: history.slice(0, 10).map(h => {
+          const label = h.name || h.sessionId.substring(0, 8) + '...';
+          const endDate = new Date(h.endedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          return { text: { tag: 'plain_text', content: `${label} · ${endDate}` }, value: h.sessionId };
+        }),
+      });
     } else {
       elements.push({ tag: 'markdown', content: '**历史会话**\n暂无历史会话' });
     }
 
     elements.push({ tag: 'hr' });
     elements.push({
-      tag: 'action',
-      actions: [
-        { tag: 'button', text: { tag: 'plain_text', content: '新建会话（清空上下文）' }, type: 'primary', value: { action: 'create_session' } },
-        { tag: 'button', text: { tag: 'plain_text', content: '结束会话' }, type: 'danger', value: { action: 'end_session' } },
+      tag: 'column_set',
+      flex_mode: 'none',
+      background_style: 'default',
+      columns: [
+        {
+          tag: 'column',
+          width: 'auto',
+          elements: [
+            { tag: 'button', text: { tag: 'plain_text', content: '新建会话' }, type: 'primary', value: { action: 'create_session' } },
+          ],
+        },
+        {
+          tag: 'column',
+          width: 'auto',
+          elements: [
+            { tag: 'button', text: { tag: 'plain_text', content: '结束会话' }, type: 'danger', value: { action: 'end_session' } },
+          ],
+        },
       ],
     });
 
-    return {
-      schema: '2.0',
-      config: { wide_screen_mode: true },
-      header: { title: { tag: 'plain_text', content: '会话管理' }, template: 'blue' },
-      body: { elements },
-    };
+    return this._createCard('会话管理', 'blue', elements);
   }
 
   _buildStatusCard() {
@@ -564,37 +587,23 @@ class FeishuAdapter {
       `**已处理消息** ${this.handled.size}条`,
     ].join('\n');
 
-    return {
-      config: { wide_screen_mode: true },
-      header: {
-        title: { tag: 'plain_text', content: '系统状态' },
-        template: 'green',
+    return this._createCard('系统状态', 'green', [
+      { tag: 'markdown', content: statusText },
+      { tag: 'hr' },
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: '刷新' },
+        type: 'default',
+        value: { action: 'refresh_status' },
       },
-      elements: [
-        { tag: 'markdown', content: statusText },
-        { tag: 'hr' },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '刷新' },
-              type: 'default',
-              value: { action: 'refresh_status' },
-            },
-          ],
-        },
-      ],
-    };
+    ]);
   }
 
   _buildLogCard() {
     if (this.recentLogs.length === 0) {
-      return {
-        config: { wide_screen_mode: true },
-        header: { title: { tag: 'plain_text', content: '消息日志' }, template: 'orange' },
-        elements: [{ tag: 'markdown', content: '暂无处理记录（重启后清空）' }],
-      };
+      return this._createCard('消息日志', 'orange', [
+        { tag: 'markdown', content: '暂无处理记录（重启后清空）' },
+      ]);
     }
 
     const lines = this.recentLogs.slice().reverse().map(log => {
@@ -604,13 +613,9 @@ class FeishuAdapter {
       return `${icon} \`${time}\` ${text} (${log.responseTime}s)`;
     }).join('\n');
 
-    return {
-      config: { wide_screen_mode: true },
-      header: { title: { tag: 'plain_text', content: '消息日志' }, template: 'orange' },
-      elements: [
-        { tag: 'markdown', content: `最近 ${this.recentLogs.length} 条记录：\n\n${lines}` },
-      ],
-    };
+    return this._createCard('消息日志', 'orange', [
+      { tag: 'markdown', content: `最近 ${this.recentLogs.length} 条记录：\n\n${lines}` },
+    ]);
   }
 
   async _buildCosCard() {
@@ -650,17 +655,13 @@ class FeishuAdapter {
         groupLines,
       ].join('\n');
 
-      return {
-        config: { wide_screen_mode: true },
-        header: { title: { tag: 'plain_text', content: 'COS 存储概览' }, template: 'purple' },
-        elements: [{ tag: 'markdown', content: statusText }],
-      };
+      return this._createCard('COS 存储概览', 'purple', [
+        { tag: 'markdown', content: statusText },
+      ]);
     } catch (err) {
-      return {
-        config: { wide_screen_mode: true },
-        header: { title: { tag: 'plain_text', content: 'COS 存储概览' }, template: 'red' },
-        elements: [{ tag: 'markdown', content: `查询失败: ${err.message}` }],
-      };
+      return this._createCard('COS 存储概览', 'red', [
+        { tag: 'markdown', content: `查询失败: ${err.message}` },
+      ]);
     }
   }
 
@@ -675,12 +676,7 @@ class FeishuAdapter {
       statLines.push(`7天 ${m.total} 次对话 · 命中率 ${(m.hitRate * 100).toFixed(0)}% · 检索 ${m.avgRetrievalMs}ms`);
     }
 
-    return {
-      schema: '2.0',
-      config: { wide_screen_mode: true },
-      header: { title: { tag: 'plain_text', content: '记忆系统' }, template: 'wathet' },
-      body: {
-        elements: [
+    return this._createCard('记忆系统', 'wathet', [
           { tag: 'markdown', content: statLines.join('\n') },
           { tag: 'hr' },
           {
@@ -724,129 +720,96 @@ class FeishuAdapter {
               },
             ],
           },
-        ],
-      },
-    };
+    ]);
   }
 
   _buildBuildCard() {
-    return {
-      schema: '2.0',
-      config: { wide_screen_mode: true },
-      header: {
-        title: { tag: 'plain_text', content: '项目构建' },
-        template: 'purple',
-      },
-      body: {
+    return this._createCard('项目构建', 'purple', [
+      { tag: 'markdown', content: `根据描述自动生成代码，部署到 ${process.env.TASK_DOMAIN || 'your-domain.com'} 子域名。\n\n**能做什么**\n- 网页小游戏（贪吃蛇、俄罗斯方块、华容道…）\n- 工具页面（倒计时、计算器、转换器…）\n- 数据展示（图表、排行榜、仪表盘…）\n- 任何静态网页或 Node.js 应用` },
+      { tag: 'hr' },
+      {
+        tag: 'form',
+        name: 'build_form',
         elements: [
-          { tag: 'markdown', content: `根据描述自动生成代码，部署到 ${process.env.TASK_DOMAIN || 'your-domain.com'} 子域名。\n\n**能做什么**\n- 网页小游戏（贪吃蛇、俄罗斯方块、华容道…）\n- 工具页面（倒计时、计算器、转换器…）\n- 数据展示（图表、排行榜、仪表盘…）\n- 任何静态网页或 Node.js 应用` },
-          { tag: 'hr' },
           {
-            tag: 'form',
-            name: 'build_form',
-            elements: [
-              {
-                tag: 'input',
-                name: 'project_desc',
-                required: true,
-                input_type: 'multiline_text',
-                rows: 6,
-                width: 'fill',
-                placeholder: { tag: 'plain_text', content: '例：做一个倒计时到除夕的网页，背景用烟花动画' },
-                label: { tag: 'plain_text', content: '项目描述' },
-                max_length: 500,
-              },
-              {
-                tag: 'button',
-                text: { tag: 'plain_text', content: '开始构建' },
-                type: 'primary',
-                action_type: 'form_submit',
-                name: 'submit_build',
-              },
-            ],
+            tag: 'input',
+            name: 'project_desc',
+            required: true,
+            input_type: 'multiline_text',
+            rows: 6,
+            width: 'fill',
+            placeholder: { tag: 'plain_text', content: '例：做一个倒计时到除夕的网页，背景用烟花动画' },
+            label: { tag: 'plain_text', content: '项目描述' },
+            max_length: 500,
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '开始构建' },
+            type: 'primary',
+            action_type: 'form_submit',
+            name: 'submit_build',
           },
         ],
       },
-    };
+    ]);
   }
 
   _buildTaskCard() {
-    return {
-      schema: '2.0',
-      config: { wide_screen_mode: true },
-      header: {
-        title: { tag: 'plain_text', content: '执行任务' },
-        template: 'turquoise',
-      },
-      body: {
+    return this._createCard('执行任务', 'turquoise', [
+      { tag: 'markdown', content: '让 Jarvis 在服务器上执行任务，完成后发送通知。\n\n**能做什么**\n- 服务器运维：检查状态、分析日志、清理文件、查看进程\n- 数据操作：抓取网页、更新多维表格、生成报告\n- 项目构建：生成网页/应用并自动部署\n- 脚本执行：运行任意 shell 或 Node.js 脚本' },
+      { tag: 'hr' },
+      {
+        tag: 'form',
+        name: 'task_form',
         elements: [
-          { tag: 'markdown', content: '让 Jarvis 在服务器上执行任务，完成后发送通知。\n\n**能做什么**\n- 服务器运维：检查状态、分析日志、清理文件、查看进程\n- 数据操作：抓取网页、更新多维表格、生成报告\n- 项目构建：生成网页/应用并自动部署\n- 脚本执行：运行任意 shell 或 Node.js 脚本' },
-          { tag: 'hr' },
           {
-            tag: 'form',
-            name: 'task_form',
-            elements: [
-              {
-                tag: 'input',
-                name: 'task_instruction',
-                required: true,
-                input_type: 'multiline_text',
-                rows: 6,
-                width: 'fill',
-                placeholder: { tag: 'plain_text', content: '例：检查服务器磁盘使用情况，列出占用最大的 10 个目录' },
-                label: { tag: 'plain_text', content: '任务说明' },
-                max_length: 500,
-              },
-              {
-                tag: 'button',
-                text: { tag: 'plain_text', content: '开始执行' },
-                type: 'primary',
-                action_type: 'form_submit',
-                name: 'submit_task',
-              },
-            ],
+            tag: 'input',
+            name: 'task_instruction',
+            required: true,
+            input_type: 'multiline_text',
+            rows: 6,
+            width: 'fill',
+            placeholder: { tag: 'plain_text', content: '例：检查服务器磁盘使用情况，列出占用最大的 10 个目录' },
+            label: { tag: 'plain_text', content: '任务说明' },
+            max_length: 500,
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '开始执行' },
+            type: 'primary',
+            action_type: 'form_submit',
+            name: 'submit_task',
           },
         ],
       },
-    };
+    ]);
   }
 
   _buildHelpCard() {
-    return {
-      config: { wide_screen_mode: true },
-      header: {
-        title: { tag: 'plain_text', content: `${process.env.BOT_NAME || 'OpenMist'} 指令中心` },
-        template: 'indigo',
+    const botName = process.env.BOT_NAME || 'OpenMist';
+    const taskDomain = process.env.TASK_DOMAIN || 'your-domain.com';
+    return this._createCard(`${botName} 指令中心`, 'indigo', [
+      { tag: 'markdown', content: `点击按钮直接打开对应功能。也可以直接发文字、图片或文件与 ${botName} 对话。` },
+      { tag: 'hr' },
+      { tag: 'markdown', content: `**🔨 构建项目** \`/build\`\n生成网页或应用，自动部署到 ${taskDomain} 子域名\n适合：游戏、工具页、数据展示、静态或 Node.js 项目` },
+      { tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'build' } },
+      { tag: 'hr' },
+      { tag: 'markdown', content: `**⚡ 执行任务** \`/task\`\n让 ${botName} 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行` },
+      { tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'task' } },
+      { tag: 'hr' },
+      { tag: 'markdown', content: '**更多功能**' },
+      {
+        tag: 'overflow',
+        value: { action: 'open_command' },
+        options: [
+          { text: { tag: 'plain_text', content: '💬 会话管理' }, value: 'session' },
+          { text: { tag: 'plain_text', content: '📊 系统状态' }, value: 'status' },
+          { text: { tag: 'plain_text', content: '📋 消息日志' }, value: 'log' },
+          { text: { tag: 'plain_text', content: '🧠 记忆系统' }, value: 'memory' },
+          { text: { tag: 'plain_text', content: '☁️ COS 存储' }, value: 'cos' },
+        ],
       },
-      elements: [
-        { tag: 'markdown', content: `点击按钮直接打开对应功能。也可以直接发文字、图片或文件与 ${process.env.BOT_NAME || 'OpenMist'} 对话。` },
-        { tag: 'hr' },
-        { tag: 'markdown', content: `**🔨 构建项目** \`/build\`\n生成网页或应用，自动部署到 ${process.env.TASK_DOMAIN || 'your-domain.com'} 子域名\n适合：游戏、工具页、数据展示、静态或 Node.js 项目` },
-        { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'build' } }] },
-        { tag: 'hr' },
-        { tag: 'markdown', content: `**⚡ 执行任务** \`/task\`\n让 ${process.env.BOT_NAME || 'OpenMist'} 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行` },
-        { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'task' } }] },
-        { tag: 'hr' },
-        { tag: 'markdown', content: '**💬 会话管理** `/session`　　**📊 系统状态** `/status`　　**📋 消息日志** `/log`' },
-        {
-          tag: 'action',
-          actions: [
-            { tag: 'button', text: { tag: 'plain_text', content: '会话' }, type: 'default', value: { action: 'open_command', cmd: 'session' } },
-            { tag: 'button', text: { tag: 'plain_text', content: '状态' }, type: 'default', value: { action: 'open_command', cmd: 'status' } },
-            { tag: 'button', text: { tag: 'plain_text', content: '日志' }, type: 'default', value: { action: 'open_command', cmd: 'log' } },
-          ],
-        },
-        { tag: 'hr' },
-        { tag: 'markdown', content: '**🧠 记忆系统** `/memory`　　**☁️ COS 存储** `/cos`' },
-        {
-          tag: 'action',
-          actions: [
-            { tag: 'button', text: { tag: 'plain_text', content: '记忆' }, type: 'default', value: { action: 'open_command', cmd: 'memory' } },
-            { tag: 'button', text: { tag: 'plain_text', content: 'COS' }, type: 'default', value: { action: 'open_command', cmd: 'cos' } },
-          ],
-        },
-      ],
-    };
+    ]);
   }
 
   _pushLog(chatId, text, responseTime, status) {

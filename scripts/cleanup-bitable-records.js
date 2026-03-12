@@ -80,12 +80,12 @@ function buildTableConfigs() {
   const githubConfig = loadJSON(path.join(DATA_DIR, "github-updates-config.json"));
 
   const tables = [
-    { name: "微博热搜",     appToken: hotAppToken,                  tableId: "tbl5aqZfZXM3ZIoo", dateField: "抓取时间", retainDays: 3 },
-    { name: "抖音热搜",     appToken: hotAppToken,                  tableId: "tblOeIfLwyjoQeHA", dateField: "抓取时间", retainDays: 3 },
-    { name: "头条热搜",     appToken: hotAppToken,                  tableId: "tblVjQD65Xk7Y0fe", dateField: "抓取时间", retainDays: 3 },
-    { name: "选题池",       appToken: hotAppToken,                  tableId: "tblTxYb4A8KHHFmh", dateField: "推荐时间", retainDays: 7 },
-    { name: "每日资讯简报", appToken: briefingConfig?.app_token,     tableId: "tbliUNHr7vFl4jRK", dateField: "采集日期", retainDays: 30 },
-    { name: "GitHub 更新",  appToken: githubConfig?.app_token,      tableId: "tblS2P3uNlhc2ZVr", dateField: "采集日期", retainDays: 30 },
+    { name: "微博热搜",     appToken: hotAppToken,                  tableId: process.env.WEIBO_TABLE_ID,     dateField: "抓取时间", retainDays: 3 },
+    { name: "抖音热搜",     appToken: hotAppToken,                  tableId: process.env.DOUYIN_TABLE_ID,    dateField: "抓取时间", retainDays: 3 },
+    { name: "头条热搜",     appToken: hotAppToken,                  tableId: process.env.TOUTIAO_TABLE_ID,   dateField: "抓取时间", retainDays: 3 },
+    { name: "选题池",       appToken: hotAppToken,                  tableId: process.env.TOPIC_POOL_TABLE_ID, dateField: "推荐时间", retainDays: 7 },
+    { name: "每日资讯简报", appToken: briefingConfig?.app_token,     tableId: process.env.BRIEFING_TABLE_ID,  dateField: "采集日期", retainDays: 30 },
+    { name: "GitHub 更新",  appToken: githubConfig?.app_token,      tableId: process.env.GITHUB_TABLE_ID,    dateField: "采集日期", retainDays: 30 },
   ];
 
   return tables;

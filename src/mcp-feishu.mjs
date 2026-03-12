@@ -22,13 +22,15 @@ const client = new lark.Client({
 });
 
 /**
- * Grant full_access permission on a Bitable app to the owner.
+ * Grant full_access permission on a drive resource to the owner.
+ * @param {string} token - Resource token
+ * @param {string} type - Resource type: "bitable", "docx", "folder", "file", etc.
  */
-async function grantAccess(appToken) {
+async function grantAccess(token, type = "bitable") {
   return await client.request({
     method: "POST",
-    url: "/open-apis/drive/v1/permissions/" + appToken + "/members",
-    params: { type: "bitable", need_notification: true },
+    url: "/open-apis/drive/v1/permissions/" + token + "/members",
+    params: { type, need_notification: true },
     data: {
       member_type: "openid",
       member_id: OWNER_OPEN_ID,
@@ -207,7 +209,7 @@ server.tool(
   {
     app_token: z.string().describe("Bitable app token"),
     table_id: z.string().describe("Table ID"),
-    fields: z.record(z.any()).describe("Field name-value pairs, e.g. {\"Name\": \"Alice\", \"Age\": 30}"),
+    fields: z.record(z.string(), z.any()).describe("Field name-value pairs, e.g. {\"Name\": \"Alice\", \"Age\": 30}"),
   },
   async ({ app_token, table_id, fields }) => {
     try {
@@ -238,7 +240,7 @@ server.tool(
     app_token: z.string().describe("Bitable app token"),
     table_id: z.string().describe("Table ID"),
     record_id: z.string().describe("Record ID to update"),
-    fields: z.record(z.any()).describe("Field name-value pairs to update"),
+    fields: z.record(z.string(), z.any()).describe("Field name-value pairs to update"),
   },
   async ({ app_token, table_id, record_id, fields }) => {
     try {
@@ -608,7 +610,7 @@ server.tool(
 // Tool: Create document
 server.tool(
   "docx_create",
-  "Create a new Feishu cloud document",
+  "Create a new Feishu cloud document and automatically grant the user full_access permissions",
   {
     title: z.string().describe("Document title"),
     folder_token: z.string().optional().describe("Folder token to create the document in (optional, creates in root if not specified)"),
@@ -628,7 +630,7 @@ server.tool(
       const doc = resp.data?.document;
       // Grant access to owner
       if (doc?.document_id) {
-        await grantAccess(doc.document_id);
+        await grantAccess(doc.document_id, "docx");
       }
 
       return {
@@ -637,7 +639,8 @@ server.tool(
           text: JSON.stringify({
             document_id: doc?.document_id,
             title: doc?.title,
-            revision_id: doc?.revision_id,
+            url: `https://feishu.cn/docx/${doc?.document_id}`,
+            access_granted: true,
           }, null, 2),
         }],
       };
@@ -932,7 +935,7 @@ server.tool(
 // Tool: Create folder
 server.tool(
   "drive_create_folder",
-  "Create a new folder in Feishu Drive",
+  "Create a new folder in Feishu Drive and automatically grant the user full_access permissions",
   {
     name: z.string().describe("Folder name"),
     folder_token: z.string().optional().describe("Parent folder token (empty for root)"),
@@ -949,7 +952,7 @@ server.tool(
 
       // Grant access
       if (resp.data?.token) {
-        await grantAccess(resp.data.token);
+        await grantAccess(resp.data.token, "folder");
       }
 
       return {
@@ -970,7 +973,7 @@ server.tool(
 // Tool: Copy file
 server.tool(
   "drive_copy_file",
-  "Copy a file in Feishu Drive",
+  "Copy a file in Feishu Drive and automatically grant the user full_access permissions",
   {
     file_token: z.string().describe("Source file token"),
     name: z.string().describe("New file name"),
@@ -989,6 +992,12 @@ server.tool(
       if (resp.code !== 0) {
         return { content: [{ type: "text", text: `Feishu API error: ${resp.msg} (code: ${resp.code})` }], isError: true };
       }
+
+      // Grant access to owner for the copied file
+      if (resp.data?.file?.token) {
+        await grantAccess(resp.data.file.token, type);
+      }
+
 
       return {
         content: [{
