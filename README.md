@@ -33,17 +33,17 @@ The core insight: Claude Code is already the most capable agent runtime. Buildin
 
 Production-hardened security that operates at the Claude Code runtime layer, not the application layer. Bash command filtering blocks 5 categories of destructive operations (irreversible destruction, credential leaks, raw env dumps, sudo escalation, eval injection) while allowing all legitimate system operations. Write/Edit path whitelisting prevents unauthorized file access. Every tool invocation is logged to an append-only audit trail.
 
-### Three-Layer Hybrid Memory
+### Three-Layer Hybrid Memory + MMR Retrieval
 
-Working memory (in-process, keyword search) for current session context. Vector retrieval (DashScope embeddings + sqlite-vec) for semantic recall across sessions. Permanent archive for conversation summarization and long-term knowledge. Hybrid search blends 70% semantic similarity with 30% keyword matching, with automatic fallback to keyword-only when the vector layer is unavailable.
+Working memory (in-process, keyword search) for current session context. Vector retrieval (DashScope embeddings + sqlite-vec) for semantic recall across sessions. Permanent archive for conversation summarization and long-term knowledge. Hybrid search blends 70% semantic similarity with 30% keyword matching, with automatic fallback to keyword-only when the vector layer is unavailable. **v1.2**: MMR (Maximal Marginal Relevance) reranking eliminates redundant memories; time decay with 30-day half-life ensures recent memories surface first, while high-importance memories are exempt from decay.
 
-### Multi-Channel Gateway
+### Multi-Channel Gateway + User Onboarding
 
-Unified message pipeline decouples Claude interaction from platform specifics. Feishu (WebSocket long connection) and WeCom (HTTP callback + enterprise app) adapters are included. Adding a new channel means implementing a single adapter class. Session management, media handling, streaming card updates, and memory injection happen at the gateway level.
+Unified message pipeline decouples Claude interaction from platform specifics. Feishu (WebSocket long connection) and WeCom (HTTP callback + enterprise app) adapters are included. Adding a new channel means implementing a single adapter class. Session management, media handling, streaming card updates, and memory injection happen at the gateway level. **v1.2**: First-time users are greeted with an onboarding card to set assistant name, preferred form of address, usage scenario, and language — preferences are persisted and injected into every conversation.
 
-### AI-Powered Self-Healing
+### AI-Powered Self-Healing + Auto-Update
 
-Heartbeat daemon runs two-phase checks every 30 minutes. Phase 1 (native): orphan process cleanup, file permission audit, VectorStore writability test — executes in milliseconds. Phase 2 (AI): Claude analyzes system state and auto-remediates issues like failed cron jobs, disk pressure, or stale locks. Notifications aggregate into a daily digest instead of spamming alerts.
+Heartbeat daemon runs two-phase checks every 30 minutes. Phase 1 (native): orphan process cleanup, file permission audit, VectorStore writability test — executes in milliseconds. Phase 2 (AI): Claude analyzes system state and auto-remediates issues like failed cron jobs, disk pressure, or stale locks. Notifications aggregate into a daily digest instead of spamming alerts. **v1.2**: Automatic update mechanism checks 3 sources daily (Claude CLI, Agent SDK, repository) — notifies via Feishu card, user approves, independent cron script executes safely, bot restarts and confirms.
 
 ### MCP Tool Servers
 
@@ -168,6 +168,7 @@ src/
   claude.js             # Claude Agent SDK wrapper + MCP config
   hooks.js              # PreToolUse security guard + PostToolUse audit
   session.js            # Session store with expiry and rotation
+  user-profile.js       # User preferences (onboarding + personalization)
   channels/
     base.js             # Channel adapter interface
     feishu.js           # Feishu/Lark WebSocket adapter
@@ -183,6 +184,9 @@ src/
   mcp-video.mjs         # MCP: Video downloader
   mcp-cos.mjs           # MCP: Tencent Cloud COS
 scripts/                # Ops automation (cron jobs, cleanup, reports)
+  check-updates.js      # Daily update checker (CLI, SDK, repo)
+  apply-update.js       # Approved update executor
+.claude/skills/         # Dev workflow skills (dev-go, dev-fix, dev-refactor)
 ```
 
 ---

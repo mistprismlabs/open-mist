@@ -34,17 +34,17 @@ So OpenMist was built: **20 source files, 10 dependencies**, achieving parity wi
 
 Claude can execute arbitrary shell commands. The PreToolUse hook intercepts before execution: `rm -rf`, reading `.env`, `sudo su` — blocked at code level, not prompt level. AI can't bypass it. File writes go through path whitelisting. All tool calls are logged to an append-only audit trail.
 
-**Memory system (memory/)**
+**Memory system (memory/) + MMR retrieval**
 
-Three layers: working memory (in-process JSON), vector search (DashScope + sqlite-vec), permanent archive. Queries use 70% semantic + 30% keyword hybrid search. Conversations are auto-summarized on session end. Relevant history is injected into the next conversation.
+Three layers: working memory (in-process JSON), vector search (DashScope + sqlite-vec), permanent archive. Queries use 70% semantic + 30% keyword hybrid search. Conversations are auto-summarized on session end. Relevant history is injected into the next conversation. **v1.2**: MMR reranking eliminates redundant memories via Jaccard similarity. Time decay (30-day half-life) naturally prioritizes recent context, while high-importance memories (`importance >= 8`) are exempt.
 
-**Multi-channel gateway (channels/)**
+**Multi-channel gateway (channels/) + user onboarding**
 
-The gateway handles memory injection, session management, and media — platform-agnostic. Feishu uses WebSocket, WeCom uses HTTP callbacks. Adding a new platform means writing one adapter class.
+The gateway handles memory injection, session management, and media — platform-agnostic. Feishu uses WebSocket, WeCom uses HTTP callbacks. Adding a new platform means writing one adapter class. **v1.2**: First-time users get an onboarding card to configure assistant name, form of address, usage scenario, and language. Preferences persist and inject into every conversation.
 
-**Self-healing (heartbeat.js)**
+**Self-healing (heartbeat.js) + auto-update**
 
-Runs every 30 minutes. Native checks first (kill orphan processes, fix file permissions, verify VectorStore writability), then Claude analyzes logs and system state. Failed cron jobs get re-run automatically. Disk filling up gets cleaned. Not just alerting — fixing.
+Runs every 30 minutes. Native checks first (kill orphan processes, fix file permissions, verify VectorStore writability), then Claude analyzes logs and system state. Failed cron jobs get re-run automatically. Disk filling up gets cleaned. Not just alerting — fixing. **v1.2**: Daily auto-update checks 3 sources (Claude CLI, Agent SDK, repo). Notifies via Feishu card → user approves → independent cron script executes → bot restarts and confirms.
 
 ---
 
@@ -183,6 +183,7 @@ src/
   claude.js             # Agent SDK wrapper + MCP config
   hooks.js              # Security: command filtering + path whitelisting + audit log
   session.js            # Session management
+  user-profile.js       # User preferences (onboarding + personalization)
   channels/
     base.js             # Channel adapter base class
     feishu.js           # Feishu adapter
@@ -197,6 +198,9 @@ src/
   mcp-*.mjs             # MCP tool servers
 agents/                 # Recommendation engine (optional business module)
 scripts/                # Ops scripts
+  check-updates.js      # Daily update checker (CLI, SDK, repo)
+  apply-update.js       # Approved update executor
+.claude/skills/         # Dev workflow skills (dev-go, dev-fix, dev-refactor)
 ```
 
 ---
