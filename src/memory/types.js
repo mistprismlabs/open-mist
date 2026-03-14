@@ -1,5 +1,5 @@
 /**
- * OpenMist 分层记忆系统 - 数据类型定义
+ * Jarvis 分层记忆系统 - 数据类型定义
  *
  * 三层记忆模型：
  * 1. 工作记忆 (Working Memory) - Claude SDK Session

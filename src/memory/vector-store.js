@@ -172,7 +172,7 @@ class VectorStore {
       let rows;
       if (chatId) {
         rows = this.db.prepare(`
-          SELECT v.id, v.distance, m.text, m.chat_id, m.importance
+          SELECT v.id, v.distance, m.text, m.chat_id, m.importance, m.created_at
           FROM vec_memories v
           JOIN memories m ON v.id = m.id
           WHERE v.embedding MATCH ? AND k = ?
@@ -181,7 +181,7 @@ class VectorStore {
         `).all(queryBuf, topK * 2, chatId).slice(0, topK);
       } else {
         rows = this.db.prepare(`
-          SELECT v.id, v.distance, m.text, m.chat_id, m.importance
+          SELECT v.id, v.distance, m.text, m.chat_id, m.importance, m.created_at
           FROM vec_memories v
           JOIN memories m ON v.id = m.id
           WHERE v.embedding MATCH ? AND k = ?
@@ -195,6 +195,7 @@ class VectorStore {
         chatId: r.chat_id,
         importance: r.importance,
         distance: r.distance,
+        createdAt: r.created_at,
         // cosine similarity ≈ 1 - distance (sqlite-vec 默认 L2, 但 vec0 cosine 距离)
         similarity: Math.max(0, 1 - r.distance),
       }));

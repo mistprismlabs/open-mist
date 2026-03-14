@@ -47,7 +47,7 @@ class Gateway {
    * 核心处理管线：记忆检索 → Session → Claude → 记忆追踪
    * @returns {{ text, sessionId, isNewSession, pipelineMetrics }}
    */
-  async processMessage({ chatId, text, mediaFiles = [], chatType, channelLabel, senderName }) {
+  async processMessage({ chatId, text, mediaFiles = [], chatType, channelLabel, senderName, userProfile }) {
     // 1. 记忆检索
     let memoryContext = '';
     let retrievalMs = 0, injectedCount = 0, retrievalMemories = [];
@@ -87,7 +87,7 @@ class Gateway {
     }
 
     // 3. 构建带记忆上下文的 prompt
-    const enrichedPrompt = this._buildEnrichedPrompt(text, memoryContext, senderName);
+    const enrichedPrompt = this._buildEnrichedPrompt(text, memoryContext, senderName, userProfile);
 
     // 4. Claude 调用（resume 失败自动重试）
     let response;
@@ -164,10 +164,26 @@ class Gateway {
     };
   }
 
-  _buildEnrichedPrompt(userMessage, memoryContext, senderName) {
+  _buildEnrichedPrompt(userMessage, memoryContext, senderName, userProfile) {
     const message = senderName ? `[${senderName}]: ${userMessage}` : userMessage;
-    if (!memoryContext) return message;
-    return `<memory-context>\n${memoryContext}</memory-context>\n\n${message}`;
+    let prefix = '';
+
+    // 注入用户偏好
+    if (userProfile) {
+      const prefs = [];
+      if (userProfile.userName) prefs.push(`称呼用户为「${userProfile.userName}」`);
+      if (userProfile.agentName) prefs.push(`你的名字是 ${userProfile.agentName}`);
+      if (userProfile.language === 'en') prefs.push('使用英文回复');
+      if (prefs.length > 0) {
+        prefix += `<user-preferences>${prefs.join('；')}</user-preferences>\n\n`;
+      }
+    }
+
+    if (memoryContext) {
+      prefix += `<memory-context>\n${memoryContext}</memory-context>\n\n`;
+    }
+
+    return prefix ? prefix + message : message;
   }
 
   _getSessionSize(sessionId) {

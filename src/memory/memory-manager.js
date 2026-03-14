@@ -220,9 +220,11 @@ class MemoryManager {
       this.vectorStore.search(userMessage, 5, chatId),
     ]);
 
-    // 混合排序：合并去重，加权评分
+    // 混合排序 → 时间衰减 → MMR 重排序
     const merged = this._mergeResults(keywordResults, vectorResults);
-    const recentConversations = merged.slice(0, 3);
+    const decayed = this._applyTimeDecay(merged);
+    const diversified = this._applyMMR(decayed, 0.7, 3);
+    const recentConversations = diversified.map(s => s.conv);
 
     const systemMessage = this._formatContextInjection(recentConversations);
     return { recentConversations, systemMessage };
@@ -261,8 +263,84 @@ class MemoryManager {
     // 过滤低相关性结果（纯时间分 ~0.06，语义相关才能过 0.10）
     return [...scoreMap.values()]
       .sort((a, b) => b.score - a.score)
-      .filter(s => s.score >= 0.10)
-      .map(s => s.conv);
+      .filter(s => s.score >= 0.10);
+  }
+
+  /**
+   * 时间衰减：30 天半衰期，importance >= 8 的常青记忆豁免
+   */
+  _applyTimeDecay(scoredItems) {
+    const HALF_LIFE_DAYS = 30;
+    const LN2 = Math.LN2;
+    const now = Date.now();
+
+    return scoredItems.map(item => {
+      // 常青豁免：重要记忆不衰减
+      if (item.conv.importance >= 8) return item;
+
+      const endTime = item.conv.endTime ? new Date(item.conv.endTime).getTime() : now;
+      const daysAgo = (now - endTime) / (24 * 60 * 60 * 1000);
+      const decay = Math.exp(-LN2 / HALF_LIFE_DAYS * daysAgo);
+
+      return { conv: item.conv, score: item.score * decay };
+    }).sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * MMR 重排序：贪心选择，降低与已选项相似的候选分数
+   * λ=0.7 偏重相关性，0.3 惩罚冗余
+   */
+  _applyMMR(scoredItems, lambda = 0.7, targetCount = 3) {
+    if (scoredItems.length <= 1) return scoredItems;
+
+    const selected = [];
+    const remaining = [...scoredItems];
+
+    // 第一个直接选最高分
+    selected.push(remaining.shift());
+
+    while (selected.length < targetCount && remaining.length > 0) {
+      let bestIdx = 0;
+      let bestMMR = -Infinity;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        // 计算与已选项的最大相似度
+        const maxSim = Math.max(...selected.map(s => this._jaccardSimilarity(candidate.conv, s.conv)));
+        const mmr = lambda * candidate.score - (1 - lambda) * maxSim;
+        if (mmr > bestMMR) {
+          bestMMR = mmr;
+          bestIdx = i;
+        }
+      }
+
+      selected.push(remaining.splice(bestIdx, 1)[0]);
+    }
+
+    return selected;
+  }
+
+  /**
+   * Jaccard 相似度：基于 tags + entities 的集合交并比
+   */
+  _jaccardSimilarity(convA, convB) {
+    const setA = new Set([
+      ...(convA.tags || []),
+      ...(convA.summary?.entities || []),
+    ]);
+    const setB = new Set([
+      ...(convB.tags || []),
+      ...(convB.summary?.entities || []),
+    ]);
+
+    if (setA.size === 0 && setB.size === 0) return 0;
+
+    let intersection = 0;
+    for (const item of setA) {
+      if (setB.has(item)) intersection++;
+    }
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
   }
 
   _extractKeywords(text) {

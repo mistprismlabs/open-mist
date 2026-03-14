@@ -7,8 +7,6 @@
  * - 分隔线 → tag: "hr"
  * - # 标题 → card header
  */
-const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
-
 class MessageFormatter {
   format(text) {
     if (this._isPlainText(text)) {
@@ -60,7 +58,7 @@ class MessageFormatter {
         schema: '2.0',
         config: { width_mode: 'fill' },
         header: {
-          title: { tag: 'plain_text', content: title || BOT_NAME },
+          title: { tag: 'plain_text', content: title || 'Jarvis' },
           template: 'blue',
         },
         body: { elements },

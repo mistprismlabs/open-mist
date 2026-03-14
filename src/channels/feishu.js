@@ -1,6 +1,7 @@
 const lark = require("@larksuiteoapi/node-sdk");
 const { MessageFormatter } = require("../message-formatter");
 const { MEDIA_DIR } = require("../claude");
+const { UserProfileStore } = require("../user-profile");
 const COS = require("cos-nodejs-sdk-v5");
 const fs = require("fs");
 const path = require("path");
@@ -9,9 +10,6 @@ const { promisify } = require("util");
 const https = require("https");
 const http = require("http");
 const execFileAsync = promisify(execFileCb);
-
-const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
-const USER_TITLE = process.env.USER_TITLE || '';
 
 const STALE_THRESHOLD_MS = 30 * 1000;
 const SUPPORTED_MSG_TYPES = ["text", "image", "post", "file"];
@@ -39,6 +37,8 @@ class FeishuAdapter {
     });
 
     this.formatter = new MessageFormatter();
+    this.userProfile = new UserProfileStore();
+    this.pendingOnboarding = new Map(); // chatId → { messageId, text, mediaFiles }
     this.recentLogs = []; // 最近处理记录（内存中，重启清空）
 
     // 确保 media 目录存在
@@ -70,6 +70,44 @@ class FeishuAdapter {
 
     await wsClient.start({ eventDispatcher });
     console.log("[Feishu] WebSocket connected (with card action handler)");
+
+    // 启动时检查是否有刚完成的更新需要通知
+    this._checkLastUpdate();
+  }
+
+  _checkLastUpdate() {
+    const lastUpdatePath = path.join(__dirname, '..', '..', 'data', 'updates', 'last-update.json');
+    try {
+      if (!fs.existsSync(lastUpdatePath)) return;
+      const data = JSON.parse(fs.readFileSync(lastUpdatePath, 'utf-8'));
+      if (data.notified) return;
+
+      const results = data.results || [];
+      const succeeded = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+
+      let msg = `[系统更新完成] ${succeeded.length}/${results.length} 成功`;
+      if (succeeded.length > 0) {
+        msg += '\n' + succeeded.map(r => `✅ ${r.label}: ${r.from} → ${r.to}`).join('\n');
+      }
+      if (failed.length > 0) {
+        msg += '\n' + failed.map(r => `❌ ${r.label}: 更新失败`).join('\n');
+      }
+
+      // 标记已通知
+      data.notified = true;
+      fs.writeFileSync(lastUpdatePath, JSON.stringify(data, null, 2));
+
+      // 发到飞书群
+      const { execFileSync } = require('child_process');
+      execFileSync('node', ['scripts/send-notify.js', msg], {
+        cwd: path.join(__dirname, '..', '..'),
+        timeout: 15_000,
+      });
+      console.log('[Feishu] Update completion notification sent');
+    } catch (err) {
+      console.warn('[Feishu] Check last update failed:', err.message);
+    }
   }
 
   // ==================== 消息处理 ====================
@@ -116,7 +154,7 @@ class FeishuAdapter {
           mediaFiles.push(saved);
           text = "[用户发送了一张图片]";
         } else {
-          await this._reply(messageId, `抱歉${USER_TITLE ? '，' + USER_TITLE : ''}，图片下载失败，请重新发送。`);
+          await this._reply(messageId, "抱歉先生，图片下载失败，请重新发送。");
           return;
         }
       } else if (msgType === "post") {
@@ -137,7 +175,7 @@ class FeishuAdapter {
           mediaFiles.push(saved);
           text = `[用户发送了文件: ${fileName}]`;
         } else {
-          await this._reply(messageId, `抱歉${USER_TITLE ? '，' + USER_TITLE : ''}，文件下载失败，请重新发送。`);
+          await this._reply(messageId, "抱歉先生，文件下载失败，请重新发送。");
           return;
         }
       } else {
@@ -158,7 +196,7 @@ class FeishuAdapter {
       await this._checkPendingNotifications(messageId);
 
       // === 菜单指令处理 ===
-      const bareCmd = text.match(/^\/(build|task|session|status|help|log|cos|memory)$/);
+      const bareCmd = text.match(/^\/(build|task|session|status|help|log|cos|memory|dev-go|dev-fix|dev-refactor|update)$/);
       if (bareCmd) {
         await this._handleMenuCommand(messageId, chatId, bareCmd[1]);
         return;
@@ -177,6 +215,13 @@ class FeishuAdapter {
         return;
       }
 
+      // === Onboarding 门控 ===
+      if (!this.userProfile.hasProfile(chatId)) {
+        this.pendingOnboarding.set(chatId, { messageId, text, mediaFiles });
+        await this._replyCard(messageId, this._buildOnboardingCard());
+        return;
+      }
+
       // === 通过 Gateway 处理核心管线 ===
       await this._addReaction(messageId, "OnIt");
 
@@ -188,6 +233,7 @@ class FeishuAdapter {
         chatType,
         channelLabel: chatType === 'group' ? '飞书群聊' : '飞书私聊',
         senderName: chatType === 'group' ? senderId : undefined,
+        userProfile: this.userProfile.get(chatId),
       });
 
       const responseTime = (Date.now() - startTime) / 1000;
@@ -196,7 +242,7 @@ class FeishuAdapter {
       await this._addReaction(messageId, "DONE");
 
       // 推送新下载的媒体文件（视频直接在聊天中播放）
-      await this._pushNewDownloads(chatId, beforeDownloadTime);
+      await this._pushNewDownloads(messageId, chatId, beforeDownloadTime);
 
       // === 记忆指标收集 ===
       try {
@@ -226,7 +272,7 @@ class FeishuAdapter {
       this.bitable.logChat({
         chatId,
         userMessage: text,
-        botReply: result.text,
+        jarvisReply: result.text,
         responseTime: Math.round(responseTime * 10) / 10,
         status: "成功",
         sessionId: result.sessionId,
@@ -234,13 +280,13 @@ class FeishuAdapter {
     } catch (err) {
       const responseTime = (Date.now() - startTime) / 1000;
       console.error(`[Feishu] Error handling message ${messageId}:`, err.message);
-      await this._reply(messageId, `抱歉${USER_TITLE ? '，' + USER_TITLE : ''}，处理时遇到了问题：${err.message}`);
+      await this._reply(messageId, `抱歉先生，处理时遇到了问题：${err.message}`);
 
       this._pushLog(chatId, text, responseTime, '失败');
       this.bitable.logChat({
         chatId,
         userMessage: text,
-        botReply: err.message,
+        jarvisReply: err.message,
         responseTime: Math.round(responseTime * 10) / 10,
         status: "失败",
         sessionId: "",
@@ -381,6 +427,14 @@ class FeishuAdapter {
         return this._cardResponse(this._buildSessionCard(chatId, '已切换到历史会话'), '已切换');
       }
 
+      if (actionType === 'approve_update') {
+        return this._handleUpdateAction(chatId, true);
+      }
+
+      if (actionType === 'deny_update') {
+        return this._handleUpdateAction(chatId, false);
+      }
+
       if (actionType === 'refresh_status') {
         return this._cardResponse(this._buildStatusCard(), '状态已刷新');
       }
@@ -439,6 +493,38 @@ class FeishuAdapter {
           ]));
           return { toast: { type: 'info', content: `找到 ${convs.length} 条相关记忆` } };
         }
+        if (action.form_value?.dev_instruction !== undefined) {
+          const instruction = action.form_value.dev_instruction.trim();
+          if (!instruction) return { toast: { type: 'error', content: '请输入描述' } };
+          // 从按钮的 value 中获取 skill 名称
+          const skillName = action.form_value?.skill || action.name?.replace('submit_', '') || 'dev-go';
+          const fullInstruction = `/${skillName} ${instruction}`;
+          this._runGatewayTaskAsync(chatId, fullInstruction);
+          const preview = instruction.length > 30 ? instruction.slice(0, 30) + '...' : instruction;
+          return { toast: { type: 'success', content: `收到，开始执行：${preview}` } };
+        }
+        if (action.form_value?.agent_name !== undefined || action.form_value?.submit_onboarding !== undefined) {
+          const profile = {
+            agentName: (action.form_value.agent_name || 'Jarvis').trim(),
+            userName: (action.form_value.user_name || '先生').trim(),
+            role: action.form_value.role || 'personal',
+            language: action.form_value.language || 'zh',
+          };
+          this.userProfile.set(chatId, profile);
+          console.log(`[Feishu] Onboarding completed for ${chatId}:`, profile);
+
+          // 处理暂存的原始消息
+          const pending = this.pendingOnboarding.get(chatId);
+          if (pending) {
+            this.pendingOnboarding.delete(chatId);
+            // 异步处理原始消息，不阻塞卡片响应
+            setImmediate(() => {
+              this._processAfterOnboarding(pending.messageId, chatId, pending.text, pending.mediaFiles);
+            });
+          }
+
+          return { toast: { type: 'success', content: `你好${profile.userName}！${profile.agentName} 为你服务` } };
+        }
         return { toast: { type: 'error', content: '请输入内容' } };
       }
 
@@ -452,6 +538,7 @@ class FeishuAdapter {
         else if (cmd === 'log') card = this._buildLogCard();
         else if (cmd === 'memory') card = this._buildMemoryCard();
         else if (cmd === 'cos') card = await this._buildCosCard();
+        else if (cmd === 'dev-go' || cmd === 'dev-fix' || cmd === 'dev-refactor') card = this._buildDevCard(cmd);
         if (card) await this._sendCardToChat(chatId, card);
         return { toast: { type: 'info', content: `已打开 /${cmd}` } };
       }
@@ -759,7 +846,7 @@ class FeishuAdapter {
 
   _buildTaskCard() {
     return this._createCard('执行任务', 'turquoise', [
-      { tag: 'markdown', content: `让 ${BOT_NAME} 在服务器上执行任务，完成后发送通知。\n\n**能做什么**\n- 服务器运维：检查状态、分析日志、清理文件、查看进程\n- 数据操作：抓取网页、更新多维表格、生成报告\n- 项目构建：生成网页/应用并自动部署\n- 脚本执行：运行任意 shell 或 Node.js 脚本` },
+      { tag: 'markdown', content: '让 Jarvis 在服务器上执行任务，完成后发送通知。\n\n**能做什么**\n- 服务器运维：检查状态、分析日志、清理文件、查看进程\n- 数据操作：抓取网页、更新多维表格、生成报告\n- 项目构建：生成网页/应用并自动部署\n- 脚本执行：运行任意 shell 或 Node.js 脚本' },
       { tag: 'hr' },
       {
         tag: 'form',
@@ -788,16 +875,193 @@ class FeishuAdapter {
     ]);
   }
 
+  _buildUpdateCard() {
+    const availablePath = path.join(__dirname, '..', '..', 'data', 'updates', 'available.json');
+    if (!fs.existsSync(availablePath)) {
+      return this._createCard('系统更新', 'green', [
+        { tag: 'markdown', content: '当前系统已是最新版本，没有可用更新。' },
+      ]);
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(availablePath, 'utf-8'));
+      const updates = data.updates || [];
+      if (updates.length === 0) {
+        return this._createCard('系统更新', 'green', [
+          { tag: 'markdown', content: '没有可用更新。' },
+        ]);
+      }
+
+      const lines = updates.map(u => {
+        const status = u.approved ? '✅ 已批准' : '⏳ 待批准';
+        if (u.source === 'repo') {
+          return `- **${u.label}** ${u.current} → ${u.latest}（落后 ${u.behind} 个提交）${status}`;
+        }
+        return `- **${u.label}** ${u.current} → ${u.latest} ${status}`;
+      });
+
+      const checkedAt = new Date(data.checkedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+      return this._createCard('系统更新', 'orange', [
+        { tag: 'markdown', content: `检查时间：${checkedAt}\n\n${lines.join('\n')}` },
+        { tag: 'hr' },
+        {
+          tag: 'column_set',
+          flex_mode: 'none',
+          background_style: 'default',
+          columns: [
+            { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '全部批准' }, type: 'primary', value: { action: 'approve_update' } }] },
+            { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '跳过' }, type: 'default', value: { action: 'deny_update' } }] },
+          ],
+        },
+      ]);
+    } catch (err) {
+      return this._createCard('系统更新', 'red', [
+        { tag: 'markdown', content: `读取更新信息失败：${err.message}` },
+      ]);
+    }
+  }
+
+  _handleUpdateAction(chatId, approve) {
+    const availablePath = path.join(__dirname, '..', '..', 'data', 'updates', 'available.json');
+    try {
+      if (!fs.existsSync(availablePath)) {
+        return { toast: { type: 'info', content: '没有待处理的更新' } };
+      }
+      if (approve) {
+        const data = JSON.parse(fs.readFileSync(availablePath, 'utf-8'));
+        data.updates.forEach(u => { u.approved = true; });
+        fs.writeFileSync(availablePath, JSON.stringify(data, null, 2));
+        console.log(`[Feishu] Updates approved by chat ${chatId}`);
+        return { toast: { type: 'success', content: '已批准全部更新，将在 5 分钟内执行' } };
+      } else {
+        fs.unlinkSync(availablePath);
+        console.log(`[Feishu] Updates skipped by chat ${chatId}`);
+        return { toast: { type: 'info', content: '已跳过本次更新' } };
+      }
+    } catch (err) {
+      return { toast: { type: 'error', content: `操作失败：${err.message}` } };
+    }
+  }
+
+  _buildDevCard(skillName) {
+    const configs = {
+      'dev-go': { title: '快速开发', color: 'green', placeholder: '例：给 heartbeat 加一个检查 swap 使用率的原生检查', desc: '从需求到部署一步完成：编码 → 测试 → 提交 → 部署' },
+      'dev-fix': { title: 'Bug 修复', color: 'red', placeholder: '例：feishu-bot 发消息偶尔超时，日志有 ETIMEOUT', desc: '定位问题并修复：查日志 → 找根因 → 最小修复 → 验证' },
+      'dev-refactor': { title: '代码重构', color: 'orange', placeholder: '例：把 feishu.js 的卡片构建方法提取到独立文件', desc: '安全地改善代码结构：分析 → 安全网 → 小步重构 → 验证' },
+    };
+    const cfg = configs[skillName] || configs['dev-go'];
+    return this._createCard(cfg.title, cfg.color, [
+      { tag: 'markdown', content: cfg.desc },
+      { tag: 'hr' },
+      {
+        tag: 'form',
+        name: `${skillName}_form`,
+        elements: [
+          {
+            tag: 'input',
+            name: 'dev_instruction',
+            required: true,
+            input_type: 'multiline_text',
+            rows: 6,
+            width: 'fill',
+            placeholder: { tag: 'plain_text', content: cfg.placeholder },
+            label: { tag: 'plain_text', content: '描述' },
+            max_length: 500,
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '开始' },
+            type: 'primary',
+            action_type: 'form_submit',
+            name: `submit_${skillName}`,
+            value: { skill: skillName },
+          },
+        ],
+      },
+    ]);
+  }
+
+  _buildOnboardingCard() {
+    return this._createCard('欢迎使用', 'indigo', [
+      { tag: 'markdown', content: '你好！我是你的智能助手。在开始之前，让我了解一下你的偏好。' },
+      { tag: 'hr' },
+      {
+        tag: 'form',
+        name: 'onboarding_form',
+        elements: [
+          {
+            tag: 'input',
+            name: 'agent_name',
+            label: { tag: 'plain_text', content: '助手名称' },
+            placeholder: { tag: 'plain_text', content: '给助手起个名字' },
+            default_value: 'Jarvis',
+            width: 'fill',
+          },
+          {
+            tag: 'input',
+            name: 'user_name',
+            label: { tag: 'plain_text', content: '你希望被怎么称呼' },
+            placeholder: { tag: 'plain_text', content: '例：先生、老板、同学' },
+            default_value: '先生',
+            width: 'fill',
+          },
+          {
+            tag: 'select_static',
+            name: 'role',
+            label: { tag: 'plain_text', content: '使用场景' },
+            placeholder: { tag: 'plain_text', content: '选择使用场景' },
+            options: [
+              { text: { tag: 'plain_text', content: '个人助手' }, value: 'personal' },
+              { text: { tag: 'plain_text', content: '开发辅助' }, value: 'dev' },
+              { text: { tag: 'plain_text', content: '团队协作' }, value: 'team' },
+            ],
+          },
+          {
+            tag: 'select_static',
+            name: 'language',
+            label: { tag: 'plain_text', content: '回复语言' },
+            placeholder: { tag: 'plain_text', content: '选择语言' },
+            options: [
+              { text: { tag: 'plain_text', content: '中文' }, value: 'zh' },
+              { text: { tag: 'plain_text', content: 'English' }, value: 'en' },
+            ],
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '开始使用' },
+            type: 'primary',
+            action_type: 'form_submit',
+            name: 'submit_onboarding',
+          },
+        ],
+      },
+    ]);
+  }
+
   _buildHelpCard() {
+    const botName = process.env.BOT_NAME || 'OpenMist';
     const taskDomain = process.env.TASK_DOMAIN || 'your-domain.com';
-    return this._createCard(`${BOT_NAME} 指令中心`, 'indigo', [
-      { tag: 'markdown', content: `点击按钮直接打开对应功能。也可以直接发文字、图片或文件与 ${BOT_NAME} 对话。` },
+    return this._createCard(`${botName} 指令中心`, 'indigo', [
+      { tag: 'markdown', content: `点击按钮直接打开对应功能。也可以直接发文字、图片或文件与 ${botName} 对话。` },
       { tag: 'hr' },
       { tag: 'markdown', content: `**🔨 构建项目** \`/build\`\n生成网页或应用，自动部署到 ${taskDomain} 子域名\n适合：游戏、工具页、数据展示、静态或 Node.js 项目` },
       { tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'build' } },
       { tag: 'hr' },
-      { tag: 'markdown', content: `**⚡ 执行任务** \`/task\`\n让 ${BOT_NAME} 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行` },
+      { tag: 'markdown', content: `**⚡ 执行任务** \`/task\`\n让 ${botName} 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行` },
       { tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'task' } },
+      { tag: 'hr' },
+      { tag: 'markdown', content: '**开发工具**' },
+      {
+        tag: 'column_set',
+        flex_mode: 'none',
+        background_style: 'default',
+        columns: [
+          { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '/dev-go' }, type: 'primary', value: { action: 'open_command', cmd: 'dev-go' } }] },
+          { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '/dev-fix' }, type: 'danger', value: { action: 'open_command', cmd: 'dev-fix' } }] },
+          { tag: 'column', width: 'auto', elements: [{ tag: 'button', text: { tag: 'plain_text', content: '/dev-refactor' }, type: 'default', value: { action: 'open_command', cmd: 'dev-refactor' } }] },
+        ],
+      },
       { tag: 'hr' },
       { tag: 'markdown', content: '**更多功能**' },
       {
@@ -867,6 +1131,16 @@ class FeishuAdapter {
 
     if (cmd === 'task') {
       await this._replyCard(messageId, this._buildTaskCard());
+      return;
+    }
+
+    if (cmd === 'dev-go' || cmd === 'dev-fix' || cmd === 'dev-refactor') {
+      await this._replyCard(messageId, this._buildDevCard(cmd));
+      return;
+    }
+
+    if (cmd === 'update') {
+      await this._replyCard(messageId, this._buildUpdateCard());
       return;
     }
 
@@ -1110,7 +1384,7 @@ class FeishuAdapter {
 
   // ==================== 媒体推送 ====================
 
-  async _pushNewDownloads(chatId, sinceTimestamp) {
+  async _pushNewDownloads(messageId, chatId, sinceTimestamp) {
     try {
       if (!fs.existsSync(DOWNLOADS_DIR)) return;
       const files = fs.readdirSync(DOWNLOADS_DIR);
@@ -1118,7 +1392,7 @@ class FeishuAdapter {
         const match = file.match(/^(\d+)-/);
         if (match && parseInt(match[1]) >= sinceTimestamp) {
           const filePath = path.join(DOWNLOADS_DIR, file);
-          await this._sendMediaToChat(chatId, filePath);
+          await this._sendMediaToChat(messageId, chatId, filePath);
         }
       }
     } catch (err) {
@@ -1126,7 +1400,7 @@ class FeishuAdapter {
     }
   }
 
-  async _sendMediaToChat(chatId, filePath) {
+  async _sendMediaToChat(messageId, chatId, filePath) {
     const fileName = path.basename(filePath);
     const ext = path.extname(filePath).toLowerCase();
     const fileStat = fs.statSync(filePath);
@@ -1398,6 +1672,25 @@ class FeishuAdapter {
 
   // ==================== 任务构建 ====================
 
+  async _processAfterOnboarding(messageId, chatId, text, mediaFiles) {
+    try {
+      await this._addReaction(messageId, 'OnIt');
+      const result = await this.gateway.processMessage({
+        chatId,
+        text,
+        mediaFiles,
+        chatType: 'p2p',
+        channelLabel: '飞书私聊',
+        userProfile: this.userProfile.get(chatId),
+      });
+      await this._reply(messageId, result.text);
+      await this._addReaction(messageId, 'DONE');
+    } catch (err) {
+      console.error('[Feishu] Post-onboarding processing failed:', err.message);
+      await this._reply(messageId, `抱歉，处理时遇到了问题：${err.message}`);
+    }
+  }
+
   async _runGatewayTaskAsync(chatId, instruction) {
     try {
       const result = await this.gateway.processMessage({
@@ -1451,7 +1744,7 @@ class FeishuAdapter {
       this.bitable.logChat({
         chatId,
         userMessage: `/build ${instruction}`,
-        botReply: replyText,
+        jarvisReply: replyText,
         responseTime: Math.round((Date.now() - startTime) / 100) / 10,
         status: "成功",
         sessionId: "",
@@ -1464,7 +1757,7 @@ class FeishuAdapter {
       this.bitable.logChat({
         chatId,
         userMessage: `/build ${instruction}`,
-        botReply: err.message,
+        jarvisReply: err.message,
         responseTime: Math.round((Date.now() - startTime) / 100) / 10,
         status: "失败",
         sessionId: "",
