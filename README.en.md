@@ -34,9 +34,9 @@ So OpenMist was built: **20 source files, 10 dependencies**, achieving parity wi
 
 Claude can execute arbitrary shell commands. The PreToolUse hook intercepts before execution: `rm -rf`, reading `.env`, `sudo su` — blocked at code level, not prompt level. AI can't bypass it. File writes go through path whitelisting. All tool calls are logged to an append-only audit trail.
 
-**Memory system (memory/) + MMR retrieval**
+**Memory system (memory/) + multi-tenant isolation**
 
-Three layers: working memory (in-process JSON), vector search (DashScope + sqlite-vec), permanent archive. Queries use 70% semantic + 30% keyword hybrid search. Conversations are auto-summarized on session end. Relevant history is injected into the next conversation. **v1.2**: MMR reranking eliminates redundant memories via Jaccard similarity. Time decay (30-day half-life) naturally prioritizes recent context, while high-importance memories (`importance >= 8`) are exempt.
+Three layers: working memory (in-process JSON), vector search (DashScope + sqlite-vec), permanent archive. Queries use 70% semantic + 30% keyword hybrid search. Conversations are auto-summarized on session end. Relevant history is injected into the next conversation. **v1.2**: MMR reranking eliminates redundant memories via Jaccard similarity. Time decay (30-day half-life) naturally prioritizes recent context, while high-importance memories (`importance >= 8`) are exempt. **v1.3**: Multi-tenant memory isolation — userId flows through the entire chain, each user's memories are invisible to others. Haiku auto-extracts concise intent and key decisions on session end, improving retrieval precision.
 
 **Multi-channel gateway (channels/) + user onboarding**
 
@@ -133,6 +133,7 @@ Optional:
 |----------|-------------|
 | `ANTHROPIC_BASE_URL` | API endpoint, default `https://api.anthropic.com` |
 | `DASHSCOPE_API_KEY` | Alibaba DashScope (vector embeddings) |
+| `ADMIN_USER_ID` | Admin open_id (multi-tenant migration, falls back to `FEISHU_OWNER_ID`) |
 | `WECOM_CORP_ID` | WeCom corp ID (enables WeCom channel) |
 | `COS_SECRET_ID` / `COS_SECRET_KEY` | Tencent Cloud COS (object storage) |
 

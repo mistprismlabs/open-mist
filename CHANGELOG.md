@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] - 2026-03-16
+
+### Added
+
+- **多租户记忆隔离** — userId 全链路传递（VectorStore → ShortTermMemory → MemoryManager → Gateway → FeishuAdapter），不同用户的记忆互不可见
+- **Prompt Caching** — `complete()` 启用 `cache_control: ephemeral`，系统提示词缓存命中后费用降 90%
+- **JSON Schema 结构化输出** — `complete()` 支持 `options.schema`，通过 tool_use 强制结构化返回，替代 `parseJSON` fallback
+- **effort 智能省钱** — Gateway 评估消息复杂度（代码块/文件路径/技术关键词/长度），自动设置 `low`/`high` effort
+- **Haiku 意图提取** — 对话结束时用 Haiku 模型生成精炼 `userIntent`（20 字以内），提升记忆检索精度
+- **keyDecisions 自动提取** — Haiku + JSON Schema 从对话中提取关键决策（最多 3 条），写入短期记忆
+- **ADMIN_USER_ID 迁移** — 启动时自动将旧数据（无 userId）归位到管理员，fallback 链：`ADMIN_USER_ID` → `FEISHU_OWNER_ID` → `'default'`
+
+### Changed
+
+- VectorStore `memories` 表新增 `user_id` 列（ALTER TABLE 自动迁移）
+- `complete()` 请求头增加 `anthropic-beta: prompt-caching-2024-07-31`
+- `complete()` system 参数从字符串改为数组格式（支持 cache_control）
+- `chat()` 新增第 4 参数 `chatOptions`（支持 effort）
+- `_extractIntent()` 从同步改为异步（Haiku API 调用）
+
 ## [1.2.0] - 2026-03-14
 
 ### Added
