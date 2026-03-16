@@ -13,6 +13,7 @@ const { ShortTermMemory } = require("./short-term");
 const { VectorStore } = require("./vector-store");
 const { generateUUID } = require("./types");
 const { Archive } = require("../archive");
+const { ClaudeClient } = require("../claude");
 
 // 压缩触发阈值
 const COMPRESS_SIZE_THRESHOLD = 8 * 1024 * 1024;  // 8MB
@@ -23,23 +24,33 @@ const COMPRESS_TIME_THRESHOLD = 2 * 60 * 60 * 1000; // 2 小时
 const VECTOR_WEIGHT = 0.7;
 const KEYWORD_WEIGHT = 0.3;
 
+const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const DEFAULT_USER_ID = process.env.ADMIN_USER_ID || process.env.FEISHU_OWNER_ID || 'default';
+
 class MemoryManager {
   constructor() {
     this.shortTerm = new ShortTermMemory();
     this.vectorStore = new VectorStore();
     this.archive = new Archive();
     this.activeConversations = new Map();
+    this._claude = null;
+  }
+
+  _getClaudeClient() {
+    if (!this._claude) this._claude = new ClaudeClient();
+    return this._claude;
   }
 
   // ==================== 对话追踪 ====================
 
-  startConversation(sessionId, chatId, chatType) {
+  startConversation(sessionId, chatId, chatType, userId) {
     if (this.activeConversations.has(sessionId)) return;
 
     this.activeConversations.set(sessionId, {
       conversationId: generateUUID(),
       sessionId,
       chatId,
+      userId: userId || DEFAULT_USER_ID,
       chatType: chatType || "飞书群聊",
       startTime: new Date().toISOString(),
       messageCount: 0,
@@ -139,14 +150,15 @@ class MemoryManager {
     const summary = {
       conversationId: conv.conversationId,
       chatId: conv.chatId,
+      userId: conv.userId || DEFAULT_USER_ID,
       sessionId: conv.sessionId,
       chatType: conv.chatType,
       startTime: conv.startTime,
       endTime,
       messageCount: conv.messageCount,
       summary: {
-        userIntent: this._extractIntent(conv.messages),
-        keyDecisions: [],
+        userIntent: await this._extractIntent(conv.messages),
+        keyDecisions: await this._extractKeyDecisions(conv.messages),
         outcome: "对话正常结束",
         entities: [...conv.entities],
       },
@@ -167,6 +179,7 @@ class MemoryManager {
     const vectorText = `${summary.summary.userIntent}\n${summary.tags.join(", ")}\n${[...conv.entities].join(", ")}`;
     this.vectorStore.store(summary.conversationId, vectorText, {
       chatId: conv.chatId,
+      userId: conv.userId || DEFAULT_USER_ID,
       importance: summary.importance,
     }).catch(err => console.warn("[MemoryManager] Vector store failed:", err.message));
 
@@ -179,11 +192,66 @@ class MemoryManager {
     return summary;
   }
 
-  _extractIntent(messages) {
+  async _extractIntent(messages) {
     const userMessages = messages.filter(m => m.role === "user");
     if (userMessages.length === 0) return "未知意图";
+
+    // 尝试用 Haiku 提取精炼意图
+    try {
+      const texts = userMessages.slice(0, 5).map(m => m.content).join("\n");
+      const result = await this._getClaudeClient().complete(
+        "你是一个意图提取器。用一句话概括用户的核心意图（20字以内），只输出意图本身，不要解释。",
+        texts,
+        { model: HAIKU_MODEL, maxTokens: 100 }
+      );
+      const intent = result.text.trim();
+      if (intent && intent.length <= 100) return intent;
+    } catch (err) {
+      console.warn("[MemoryManager] Haiku intent extraction failed, fallback:", err.message);
+    }
+
+    // fallback: 截取前 100 字
     const first = userMessages[0].content;
     return first.length <= 100 ? first : first.substring(0, 100) + "...";
+  }
+
+  async _extractKeyDecisions(messages) {
+    if (messages.length < 2) return [];
+
+    try {
+      const texts = messages.slice(0, 20).map(m => `[${m.role}]: ${m.content}`).join("\n");
+      const result = await this._getClaudeClient().complete(
+        "你是一个决策提取器。从对话中提取关键决策，返回 JSON 数组，每条 < 60 字，最多 3 条。只输出 JSON 数组，例如 [\"决策1\", \"决策2\"]。如果没有明确决策，返回空数组 []。",
+        texts,
+        {
+          model: HAIKU_MODEL,
+          maxTokens: 300,
+          schema: {
+            type: "object",
+            properties: {
+              decisions: {
+                type: "array",
+                items: { type: "string", maxLength: 60 },
+                maxItems: 3,
+              },
+            },
+            required: ["decisions"],
+          },
+        }
+      );
+      // schema 模式返回 json 字段
+      if (result.json?.decisions) {
+        return result.json.decisions.slice(0, 3);
+      }
+      // fallback: 文本模式解析
+      if (result.text) {
+        const { parseJSON } = require("../claude");
+        return parseJSON(result.text).slice(0, 3);
+      }
+    } catch (err) {
+      console.warn("[MemoryManager] Key decisions extraction failed:", err.message);
+    }
+    return [];
   }
 
   _calculateImportance(conv) {
@@ -211,13 +279,13 @@ class MemoryManager {
 
   // ==================== 记忆检索 ====================
 
-  async retrieveRelevantMemories(userMessage, chatId) {
+  async retrieveRelevantMemories(userMessage, chatId, userId) {
     const keywords = this._extractKeywords(userMessage);
 
     // 关键词和向量检索并行
     const [keywordResults, vectorResults] = await Promise.all([
-      Promise.resolve(this.shortTerm.getMostRelevant(keywords, 5, chatId)),
-      this.vectorStore.search(userMessage, 5, chatId),
+      Promise.resolve(this.shortTerm.getMostRelevant(keywords, 5, chatId, userId)),
+      this.vectorStore.search(userMessage, 5, chatId, userId),
     ]);
 
     // 混合排序 → 时间衰减 → MMR 重排序
@@ -382,12 +450,13 @@ class MemoryManager {
 
   // ==================== 手动写入记忆 ====================
 
-  async saveManual(content, chatId) {
+  async saveManual(content, chatId, userId) {
     const id = generateUUID();
     const now = new Date().toISOString();
     const summary = {
       conversationId: id,
       chatId: chatId || 'manual',
+      userId: userId || DEFAULT_USER_ID,
       sessionId: 'manual',
       chatType: '手动记忆',
       startTime: now,
@@ -405,7 +474,7 @@ class MemoryManager {
     };
 
     this.shortTerm.save(summary);
-    await this.vectorStore.store(id, content, { chatId: chatId || 'manual', importance: 9 })
+    await this.vectorStore.store(id, content, { chatId: chatId || 'manual', userId: userId || DEFAULT_USER_ID, importance: 9 })
       .catch(err => console.warn('[MemoryManager] Manual save vector failed:', err.message));
 
     console.log(`[MemoryManager] Manual memory saved: ${content.substring(0, 50)}`);

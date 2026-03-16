@@ -25,12 +25,11 @@ class Gateway {
     setPreCompactCallback(async (sessionId) => {
       const conv = this.memory.activeConversations.get(sessionId);
       if (!conv) return;
-      const chatId = conv.chatId;
-      const chatType = conv.chatType;
+      const { chatId, chatType, userId } = conv;
       console.log(`[Gateway] PreCompact: saving memory for session ${sessionId.substring(0, 8)}...`);
       await this._endSession(sessionId);
       // 压缩后对话继续，重新开始追踪
-      this.memory.startConversation(sessionId, chatId, chatType);
+      this.memory.startConversation(sessionId, chatId, chatType, userId);
     });
 
     // Hook: 工具使用记录（PostToolUse → 记忆追踪）
@@ -47,13 +46,13 @@ class Gateway {
    * 核心处理管线：记忆检索 → Session → Claude → 记忆追踪
    * @returns {{ text, sessionId, isNewSession, pipelineMetrics }}
    */
-  async processMessage({ chatId, text, mediaFiles = [], chatType, channelLabel, senderName, userProfile }) {
+  async processMessage({ chatId, text, mediaFiles = [], chatType, channelLabel, senderName, userProfile, userId }) {
     // 1. 记忆检索
     let memoryContext = '';
     let retrievalMs = 0, injectedCount = 0, retrievalMemories = [];
     const retrievalStart = Date.now();
     try {
-      const memories = await this.memory.retrieveRelevantMemories(text, chatId);
+      const memories = await this.memory.retrieveRelevantMemories(text, chatId, userId);
       memoryContext = memories.systemMessage || '';
       if (memoryContext) {
         console.log(`[Gateway] Injected ${memories.recentConversations.length} relevant memories`);
@@ -89,17 +88,23 @@ class Gateway {
     // 3. 构建带记忆上下文的 prompt
     const enrichedPrompt = this._buildEnrichedPrompt(text, memoryContext, senderName, userProfile);
 
-    // 4. Claude 调用（resume 失败自动重试）
+    // 4. 评估消息复杂度 → effort 参数
+    const effort = this._assessEffort(text);
+    if (effort) {
+      console.log(`[Gateway] Effort: ${effort} (text length: ${text.length})`);
+    }
+
+    // 5. Claude 调用（resume 失败自动重试）
     let response;
     try {
-      response = await this.claude.chat(enrichedPrompt, existingSessionId, mediaFiles);
+      response = await this.claude.chat(enrichedPrompt, existingSessionId, mediaFiles, { effort });
     } catch (err) {
       if (existingSessionId && err.message.includes('exited with code')) {
         console.warn(`[Gateway] Resume failed (${err.message}), retrying with fresh session`);
         this.session.clear(chatId);
         isNewSession = true;
         try {
-          response = await this.claude.chat(enrichedPrompt, null, mediaFiles);
+          response = await this.claude.chat(enrichedPrompt, null, mediaFiles, { effort });
         } catch (retryErr) {
           // P5-3: 重试也失败时保存 sessionId，防止会话丢失
           if (retryErr.sessionId) {
@@ -116,12 +121,12 @@ class Gateway {
       }
     }
 
-    // 5. Session 保存 + 记忆追踪
+    // 6. Session 保存 + 记忆追踪
     if (response.sessionId) {
       this.session.set(chatId, response.sessionId);
 
       if (isNewSession) {
-        this.memory.startConversation(response.sessionId, chatId, channelLabel || chatType);
+        this.memory.startConversation(response.sessionId, chatId, channelLabel || chatType, userId);
       }
       this.memory.recordMessage(response.sessionId, { role: 'user', content: text });
       this.memory.archiveMessage(chatId, 'user', text, response.sessionId, { mediaFiles: mediaFiles.map(f => f.path) });
@@ -143,7 +148,7 @@ class Gateway {
         console.log(`[Gateway] Memory compress triggered for session ${response.sessionId.substring(0, 8)}`);
         try {
           await this._endSession(response.sessionId);
-          this.memory.startConversation(response.sessionId, chatId, channelLabel || chatType);
+          this.memory.startConversation(response.sessionId, chatId, channelLabel || chatType, userId);
         } catch (err) {
           console.warn('[Gateway] Memory compress failed:', err.message);
         }
@@ -193,6 +198,26 @@ class Gateway {
     } catch {
       return 0;
     }
+  }
+
+  /**
+   * 评估消息复杂度，决定 effort 级别
+   * @returns {'low'|'high'|undefined}
+   */
+  _assessEffort(text) {
+    const len = text.length;
+    const hasCodeBlock = /```/.test(text);
+    const hasFilePath = /\/[\w.-]+\//.test(text);
+    const complexKeywords = /部署|重构|分析|优化|迁移|设计|架构|debug|refactor|deploy|migrate/i;
+    const hasComplexKeyword = complexKeywords.test(text);
+
+    if (hasCodeBlock || hasFilePath || hasComplexKeyword || len > 200) {
+      return 'high';
+    }
+    if (len < 50) {
+      return 'low';
+    }
+    return undefined; // 使用默认值
   }
 
   /**

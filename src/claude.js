@@ -118,19 +118,32 @@ class ClaudeClient {
     const model = options.model || this.model;
     const maxTokens = options.maxTokens || 4096;
 
+    const body = {
+      model,
+      max_tokens: maxTokens,
+      system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: userMessage }],
+    };
+
+    // Schema 模式：通过 tool_use 强制结构化返回
+    if (options.schema) {
+      body.tools = [{
+        name: 'structured_output',
+        description: 'Return structured data',
+        input_schema: options.schema,
+      }];
+      body.tool_choice = { type: 'tool', name: 'structured_output' };
+    }
+
     const resp = await fetch(`${this.baseUrl}/v1/messages`, {
       method: 'POST',
       headers: {
         'x-api-key': this.apiKey,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'prompt-caching-2024-07-31',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: 'user', content: userMessage }],
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
@@ -139,6 +152,20 @@ class ClaudeClient {
     }
 
     const data = await resp.json();
+
+    // Schema 模式：从 tool_use block 提取 JSON
+    if (options.schema) {
+      const toolBlock = data.content.find(b => b.type === 'tool_use');
+      if (toolBlock) {
+        return {
+          json: toolBlock.input,
+          usage: data.usage || {},
+          stop_reason: data.stop_reason,
+        };
+      }
+      // fallback: 如果没有 tool_use block，按文本处理
+    }
+
     return {
       text: data.content[0].text,
       usage: data.usage || {},
@@ -150,8 +177,9 @@ class ClaudeClient {
    * @param {string} prompt
    * @param {string|null} sessionId
    * @param {Array<{type: string, path: string, name: string}>} mediaFiles
+   * @param {{ effort?: 'low'|'high' }} chatOptions
    */
-  async chat(prompt, sessionId = null, mediaFiles = []) {
+  async chat(prompt, sessionId = null, mediaFiles = [], chatOptions = {}) {
     const query = await loadSDK();
 
     const options = {
@@ -168,6 +196,10 @@ class ClaudeClient {
       allowedTools: ["Read", "Glob", "Grep", "TodoWrite", "Write", "Edit", "Bash", "mcp__feishu__*", "mcp__video-downloader__*", "mcp__tencent-cos__*"],
       hooks,
     };
+
+    if (chatOptions.effort) {
+      options.effort = chatOptions.effort;
+    }
 
     if (sessionId) {
       options.resume = sessionId;

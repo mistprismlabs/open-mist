@@ -47,11 +47,30 @@ class VectorStore {
         CREATE TABLE IF NOT EXISTS memories (
           id TEXT PRIMARY KEY,
           chat_id TEXT,
+          user_id TEXT DEFAULT 'default',
           text TEXT,
           importance INTEGER DEFAULT 5,
           created_at TEXT DEFAULT (datetime('now'))
         )
       `);
+
+      // 迁移：旧表可能缺 user_id 列
+      try {
+        this.db.exec(`ALTER TABLE memories ADD COLUMN user_id TEXT DEFAULT 'default'`);
+      } catch {
+        // 列已存在，忽略
+      }
+
+      // 一次性迁移：将 'default' 记录归位到管理员
+      const adminUserId = process.env.ADMIN_USER_ID || process.env.FEISHU_OWNER_ID;
+      if (adminUserId) {
+        const migrated = this.db.prepare(
+          `UPDATE memories SET user_id = ? WHERE user_id = 'default'`
+        ).run(adminUserId);
+        if (migrated.changes > 0) {
+          console.log(`[VectorStore] Migrated ${migrated.changes} records to admin user ${adminUserId.substring(0, 8)}...`);
+        }
+      }
 
       this.db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
@@ -136,9 +155,9 @@ class VectorStore {
     try {
       // 写入元数据
       this.db.prepare(`
-        INSERT OR REPLACE INTO memories (id, chat_id, text, importance, created_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-      `).run(id, meta.chatId || "", text.substring(0, 2000), meta.importance || 5);
+        INSERT OR REPLACE INTO memories (id, chat_id, user_id, text, importance, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+      `).run(id, meta.chatId || "", meta.userId || "default", text.substring(0, 2000), meta.importance || 5);
 
       // 写入向量
       this.db.prepare(`
@@ -157,7 +176,7 @@ class VectorStore {
    * 语义搜索
    * @returns {Array<{id, text, chatId, importance, distance}>}
    */
-  async search(query, topK = 5, chatId = null) {
+  async search(query, topK = 5, chatId = null, userId = null) {
     if (!this.available) return [];
 
     const embedding = await this.embed(query);
@@ -169,25 +188,27 @@ class VectorStore {
     try {
       const queryBuf = Buffer.from(embedding.buffer);
 
-      let rows;
+      // 构建过滤条件
+      const conditions = ['v.embedding MATCH ?', 'k = ?'];
+      const params = [queryBuf, topK * 2];
+
       if (chatId) {
-        rows = this.db.prepare(`
-          SELECT v.id, v.distance, m.text, m.chat_id, m.importance, m.created_at
-          FROM vec_memories v
-          JOIN memories m ON v.id = m.id
-          WHERE v.embedding MATCH ? AND k = ?
-          AND m.chat_id = ?
-          ORDER BY v.distance
-        `).all(queryBuf, topK * 2, chatId).slice(0, topK);
-      } else {
-        rows = this.db.prepare(`
-          SELECT v.id, v.distance, m.text, m.chat_id, m.importance, m.created_at
-          FROM vec_memories v
-          JOIN memories m ON v.id = m.id
-          WHERE v.embedding MATCH ? AND k = ?
-          ORDER BY v.distance
-        `).all(queryBuf, topK);
+        conditions.push('m.chat_id = ?');
+        params.push(chatId);
       }
+      if (userId) {
+        conditions.push('m.user_id = ?');
+        params.push(userId);
+      }
+
+      const sql = `
+        SELECT v.id, v.distance, m.text, m.chat_id, m.user_id, m.importance, m.created_at
+        FROM vec_memories v
+        JOIN memories m ON v.id = m.id
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY v.distance
+      `;
+      const rows = this.db.prepare(sql).all(...params).slice(0, topK);
 
       return rows.map(r => ({
         id: r.id,

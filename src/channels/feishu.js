@@ -236,6 +236,7 @@ class FeishuAdapter {
         channelLabel: chatType === 'group' ? '飞书群聊' : '飞书私聊',
         senderName: chatType === 'group' ? senderId : undefined,
         userProfile: this.userProfile.get(chatId),
+        userId: senderId,
       });
 
       const responseTime = (Date.now() - startTime) / 1000;

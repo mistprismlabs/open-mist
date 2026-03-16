@@ -41,6 +41,22 @@ class ShortTermMemory {
     } catch (err) {
       console.warn("[ShortTermMemory] Failed to load:", err.message);
     }
+
+    // 一次性迁移：将无 userId 的旧记录归位到管理员
+    const adminUserId = process.env.ADMIN_USER_ID || process.env.FEISHU_OWNER_ID;
+    if (adminUserId) {
+      let migrated = 0;
+      for (const conv of this.data.conversations) {
+        if (!conv.userId || conv.userId === 'default') {
+          conv.userId = adminUserId;
+          migrated++;
+        }
+      }
+      if (migrated > 0) {
+        console.log(`[ShortTermMemory] Migrated ${migrated} records to admin user ${adminUserId.substring(0, 8)}...`);
+        this._save();
+      }
+    }
   }
 
   _save() {
@@ -231,10 +247,11 @@ class ShortTermMemory {
     return Math.min(score, 1);
   }
 
-  getMostRelevant(keywords, limit, chatId) {
+  getMostRelevant(keywords, limit, chatId, userId) {
     limit = limit || 5;
     return this.data.conversations
       .filter(conv => !chatId || conv.chatId === chatId)
+      .filter(conv => !userId || (conv.userId || 'default') === userId)
       .map(conv => ({ conv, score: this.calculateRelevance(conv, keywords) }))
       .filter(s => s.score > 0.1)
       .sort((a, b) => b.score - a.score)
