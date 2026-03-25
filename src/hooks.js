@@ -69,6 +69,9 @@ const BASH_BLOCKED = [
   />\s*.*\.claude\/(skills|commands)\//,                    // echo/重定向写入
   /\b(cp|mv|tee|install)\b.*\.claude\/(skills|commands)\//,  // 文件复制/移动
   /\bln\s+-s.*\.claude\/(skills|commands)\//,               // 符号链接（M1 fix）
+
+  // --- SSL 证书管理 ---
+  /\bcertbot\b/,  // 禁止运行 certbot（*.mistprism.com 通配符证书已覆盖所有子域名，永远不需要单独申请新证书）
 ];
 
 // Write/Edit: 允许写入的路径

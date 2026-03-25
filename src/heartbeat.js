@@ -147,6 +147,39 @@ function checkFilePermissions() {
 }
 
 /**
+ * H5b: nginx SSL 证书路径巡检
+ * 扫描 /etc/nginx/sites-enabled/ 下所有配置，发现非标证书路径即告警
+ * 标准路径从 SSL_CERT_PATH 环境变量读取
+ */
+function checkSslCertPaths() {
+  const alerts = [];
+  const nginxDir = '/etc/nginx/sites-enabled';
+  // 从环境变量读取标准证书路径（与 deployer.js 保持一致）
+  const standardCert = process.env.SSL_CERT_PATH || '';
+  if (!standardCert) return alerts; // 未配置时跳过巡检
+  // 取证书所在目录作为匹配基准（去掉文件名）
+  const standardDir = standardCert.substring(0, standardCert.lastIndexOf('/') + 1);
+  try {
+    const files = fs.readdirSync(nginxDir);
+    for (const file of files) {
+      const filePath = nginxDir + '/' + file;
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const certLines = content.split('\n').filter(l => l.trim().startsWith('ssl_certificate'));
+        for (const line of certLines) {
+          if (!line.includes(standardDir)) {
+            alerts.push(`[SSL告警] ${file}: 非标准证书路径 → ${line.trim()}`);
+          }
+        }
+      } catch { /* 跳过无法读取的文件 */ }
+    }
+  } catch (e) {
+    console.warn('[checkSslCertPaths] 巡检失败:', e.message);
+  }
+  return alerts;
+}
+
+/**
  * H5: VectorStore 可写性检查
  */
 function checkVectorStoreWritable() {
@@ -353,6 +386,13 @@ async function heartbeat() {
   const vecAlerts = checkVectorStoreWritable();
   for (const a of vecAlerts) {
     log('[VectorStore] ' + a);
+    notify('[Heartbeat] ' + a);
+  }
+
+  // H5b: SSL 证书路径巡检
+  const sslAlerts = checkSslCertPaths();
+  for (const a of sslAlerts) {
+    log('[SSL巡检] ' + a);
     notify('[Heartbeat] ' + a);
   }
 
