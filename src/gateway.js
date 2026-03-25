@@ -49,13 +49,42 @@ class Gateway {
       }
     });
 
-    // Hook: API 错误（限流/认证失败等）— 标记 session 异常
+    // Hook: API 错误（限流/认证失败等）— 标记 session 异常 + 飞书通知
+    let _lastStopFailureNotify = 0;
     setStopFailureCallback(async (sessionId, error) => {
-      console.error(`[Gateway] StopFailure: session ${sessionId?.substring(0, 8)}... error:`, error);
+      const errorStr = typeof error === 'string' ? error : JSON.stringify(error);
+      console.error(`[Gateway] StopFailure: session ${sessionId?.substring(0, 8)}... error:`, errorStr.substring(0, 200));
+
       // 清理该 session 的活跃对话追踪，避免脏状态
       if (sessionId) {
         this.memory.activeConversations.delete(sessionId);
       }
+
+      // 飞书通知（5分钟内最多1次，防刷屏）
+      const now = Date.now();
+      if (now - _lastStopFailureNotify < 5 * 60 * 1000) return;
+      _lastStopFailureNotify = now;
+
+      const lower = errorStr.toLowerCase();
+      let emoji, category;
+      if (lower.includes('rate') || lower.includes('429') || lower.includes('throttl')) {
+        emoji = '🚦'; category = '限流 (Rate Limit)';
+      } else if (lower.includes('auth') || lower.includes('401') || lower.includes('403') || lower.includes('key')) {
+        emoji = '🔑'; category = '认证失败 (Auth Error)';
+      } else if (lower.includes('500') || lower.includes('502') || lower.includes('503') || lower.includes('server')) {
+        emoji = '💥'; category = '服务端错误 (Server Error)';
+      } else {
+        emoji = '❌'; category = '未知错误';
+      }
+
+      const { spawn } = require("child_process");
+      const msg = [
+        `${emoji} Jarvis API 异常: ${category}`,
+        `错误: ${errorStr.substring(0, 150)}`,
+        `Session: ${sessionId ? sessionId.substring(0, 8) : 'unknown'}`,
+      ].join("\n");
+      const notifyScript = require("path").join(__dirname, "..", "scripts", "send-notify.js");
+      spawn("node", [notifyScript, msg], { detached: true, stdio: "ignore" }).unref();
     });
 
     // Hook: 工具执行失败 — 发飞书通知（2分钟内最多1次，防刷屏）

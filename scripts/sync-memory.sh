@@ -16,6 +16,7 @@ fi
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR && chown jarvis:jarvis $REMOTE_DIR" 2>/dev/null
 
 # rsync 所有 memory 文件（MEMORY.md + 可能的 topic files）
-rsync -az --delete "$MEMORY_DIR/" "$REMOTE:$REMOTE_DIR/" 2>/dev/null
+rsync -az --delete "$MEMORY_DIR/" "$REMOTE:$REMOTE_DIR/"
+ssh "$REMOTE" "chown -R jarvis:jarvis $REMOTE_DIR" 2>/dev/null
 
 echo "[sync-memory] $(date '+%H:%M') synced $(ls "$MEMORY_DIR"/*.md 2>/dev/null | wc -l | tr -d ' ') files to $REMOTE:$REMOTE_DIR/"

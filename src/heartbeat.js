@@ -173,6 +173,7 @@ function runClaude(prompt) {
   return new Promise(function (resolve, reject) {
     const args = [
       '-p', prompt,
+      '--bare',
       '--allowedTools', 'Bash,Read',
       '--model', 'claude-sonnet-4-6',
       '--output-format', 'text',
