@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const { Gateway } = require('./gateway');
 const { FeishuAdapter } = require('./channels/feishu');
 const { ClaudeClient } = require('./claude');
