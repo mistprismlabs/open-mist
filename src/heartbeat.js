@@ -261,6 +261,10 @@ function buildPrompt(native) {
     'df -h / | tail -1',
     'du -sh media/',
     'tail -5 logs/fetch-hot.log',
+    // Session 健康：统计近200行日志中 No result from Claude 次数
+    'echo "NO_RESULT_COUNT=$(tail -200 logs/feishu-bot.log | grep -c \\"No result from Claude\\" || echo 0)"',
+    // MCP 连接状态：查看最近 session 的 MCP 初始化情况
+    'tail -100 logs/feishu-bot.log | grep "MCP servers:" | tail -2',
   ];
 
   // ── 时间窗口检查（cron 执行后检查对应日志）──
@@ -330,6 +334,12 @@ function buildPrompt(native) {
     'xuanxue-api非active或health接口非200→sudo systemctl restart xuanxue-api.service；' +
     '磁盘>80%或media>1GB→告警；' +
     'fetch-hot.log: 出现ERROR或写入0条→热搜采集异常,告警；' +
+    'NO_RESULT_COUNT>=3→说明近期有会话反复报"No result from Claude"，' +
+      '执行: node -e "const s=require(\'./src/session\');const d=require(\'fs\').readFileSync(\'data/sessions.json\',\'utf8\');console.log(JSON.parse(d))" 查看当前 sessionId，' +
+      '然后用 node -e "const f=require(\'fs\');const d=JSON.parse(f.readFileSync(\'data/sessions.json\',\'utf8\'));' +
+      'Object.keys(d).forEach(k=>{if(d[k].sessionId)d[k].sessionId=null});f.writeFileSync(\'data/sessions.json\',JSON.stringify(d,null,2))" 清除所有损坏的会话绑定，' +
+      '再 sudo systemctl restart feishu-bot.service，最后发告警"[已修复] 检测到Session异常(No result x次)，已清除损坏会话并重启服务"；' +
+    'MCP servers行出现disconnected/error→某个MCP服务启动异常，告警说明哪个MCP有问题；' +
     (cronRules.length ? cronRules.join('；') + '。' : '') +
     '发现任何故障→用 node scripts/send-notify.js "[Heartbeat] 具体问题" 发送告警。' +
     '用一个Bash调用执行: ' + checks.join(' && echo --- && ') + '。' +

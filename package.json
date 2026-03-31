@@ -17,7 +17,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.83",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.85",
     "@inquirer/prompts": "^8.3.0",
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "@modelcontextprotocol/sdk": "^1.27.1",

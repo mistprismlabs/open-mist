@@ -1,4 +1,4 @@
-const { setPostToolUseCallback, setSessionEndCallback, setPreCompactCallback, setPostCompactCallback, setStopFailureCallback, setToolFailureCallback } = require("./hooks");
+const { setPostToolUseCallback, setSessionEndCallback, setPreCompactCallback, setPostCompactCallback, setStopFailureCallback, setToolFailureCallback, setTaskCreatedCallback } = require("./hooks");
 const { MemoryManager } = require('./memory');
 const { MemoryMetrics } = require('./memory/metrics');
 const fs = require('fs');
@@ -17,6 +17,9 @@ class Gateway {
     this.metrics = new MemoryMetrics();
     this.onProgress = null;
     this._retryState = new Map(); // chatId → {attempt, maxRetries, errorStatus, ts}
+    this._sessionFailures = new Map(); // chatId:sessionId → {count, lastError, ts}
+    this._sessionToChatId = new Map(); // sessionId → chatId（用于 TaskCreated 等 hook 反向路由）
+    this._taskNotifyTs = new Map(); // chatId → lastNotifyTs（防刷屏：同一 chat 30s 内只发一条）
 
     // Hook: 会话结束时保存摘要
     setSessionEndCallback(async (sessionId) => {
@@ -128,6 +131,20 @@ class Gateway {
       const notifyScript = require("path").join(__dirname, "..", "scripts", "send-notify.js");
       spawn("node", [notifyScript, msg], { detached: true, stdio: "ignore" }).unref();
     });
+
+    // Hook: 任务创建通知（TaskCreated → onProgress → 用户所在渠道）
+    setTaskCreatedCallback(async (sessionId, _taskId, subject) => {
+      if (!subject || subject.length < 3) return; // 过滤空任务
+      const chatId = this._sessionToChatId.get(sessionId);
+      if (!chatId || !this.onProgress) return;
+
+      // 30s 防刷屏：同一 chat 内连续任务只通知一次
+      const now = Date.now();
+      if (now - (this._taskNotifyTs.get(chatId) || 0) < 30 * 1000) return;
+      this._taskNotifyTs.set(chatId, now);
+
+      this.onProgress(chatId, `📋 ${subject}`);
+    });
   }
 
   /**
@@ -187,9 +204,10 @@ class Gateway {
     // 5. Claude 调用（resume 失败自动重试）
     const onProgress = this.onProgress ? (summary) => this.onProgress(chatId, summary) : undefined;
     const onRetry = (info) => { this._retryState.set(chatId, { ...info, ts: Date.now() }); };
+    const onSessionInit = (sessionId) => { this._sessionToChatId.set(sessionId, chatId); };
     let response;
     try {
-      response = await this.claude.chat(enrichedPrompt, existingSessionId, mediaFiles, { effort, onProgress, onRetry });
+      response = await this.claude.chat(enrichedPrompt, existingSessionId, mediaFiles, { effort, onProgress, onRetry, onSessionInit });
     } catch (err) {
       if (existingSessionId && err.message.includes('exited with code')) {
         console.warn(`[Gateway] Resume failed (${err.message}), retrying with fresh session`);
@@ -201,21 +219,47 @@ class Gateway {
           // P5-3: 重试也失败时保存 sessionId，防止会话丢失
           if (retryErr.sessionId) {
             this.session.set(chatId, retryErr.sessionId);
+            this._sessionToChatId.set(retryErr.sessionId, chatId);
           }
           throw retryErr;
         }
       } else {
         // P5-3: Claude 调用失败时保存 sessionId，防止会话丢失
+        // 但若是 "No result from Claude" 连续失败同一 session → 自动切换
         if (err.sessionId) {
-          this.session.set(chatId, err.sessionId);
+          const failKey = `${chatId}:${err.sessionId.substring(0, 8)}`;
+          const prev = this._sessionFailures.get(failKey) || { count: 0 };
+          const newCount = prev.count + 1;
+
+          if (err.message === 'No result from Claude' && newCount >= 1) {
+            // 第一次 No result 就切换：session 损坏时继续 resume 只会更糟
+            console.warn(`[Gateway] Session ${err.sessionId.substring(0, 8)} returned no result, switching to new session`);
+            this.session.clear(chatId);
+            this._sessionFailures.delete(failKey);
+            // 在 error 上标记，让 channel 层发特殊通知
+            err.sessionSwitched = true;
+            err.brokenSessionId = err.sessionId;
+            err.failCount = newCount;
+          } else {
+            this.session.set(chatId, err.sessionId);
+            this._sessionToChatId.set(err.sessionId, chatId);
+            if (err.message === 'No result from Claude') {
+              this._sessionFailures.set(failKey, { count: newCount, lastError: err.message, ts: Date.now() });
+            }
+          }
         }
         throw err;
       }
     }
 
-    // 6. Session 保存 + 记忆追踪
+    // 6. Session 保存 + 记忆追踪（成功时清除失败计数）
     if (response.sessionId) {
       this.session.set(chatId, response.sessionId);
+      this._sessionToChatId.set(response.sessionId, chatId); // 反向路由（供 TaskCreated hook 使用）
+      // 清除该 chat 所有失败计数
+      for (const k of this._sessionFailures.keys()) {
+        if (k.startsWith(chatId + ':')) this._sessionFailures.delete(k);
+      }
 
       if (isNewSession) {
         this.memory.startConversation(response.sessionId, chatId, channelLabel || chatType, userId);

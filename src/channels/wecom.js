@@ -45,6 +45,7 @@ class WeComAdapter {
     this.reconnectAttempts = 0;
     this._reconnectTimer = null;
     this._closing = false;
+    this._subscribed = false;
 
     // Access Token 缓存
     this._accessToken = null;
@@ -162,6 +163,7 @@ class WeComAdapter {
 
     this.ws.on('close', (code, reason) => {
       console.warn(`[WeCom] WebSocket closed: code=${code} reason=${reason || 'none'}`);
+      this._subscribed = false;
       this._stopHeartbeat();
       if (!this._closing) this._reconnect();
     });
@@ -190,11 +192,14 @@ class WeComAdapter {
   _handleWsMessage(msg) {
     const cmd = msg.cmd;
 
-    // 无 cmd 的响应（如订阅响应）直接用 errcode 判断
+    // 无 cmd 的响应（如订阅响应或 ping ack）直接用 errcode 判断
     if (!cmd) {
       if (msg.errcode === 0) {
-        console.log('[WeCom] WebSocket subscribed successfully');
-        this._startHeartbeat();
+        if (!this._subscribed) {
+          this._subscribed = true;
+          console.log('[WeCom] WebSocket subscribed successfully');
+          this._startHeartbeat();
+        }
       } else if (msg.errcode !== undefined) {
         console.error(`[WeCom] WS response error: ${msg.errcode} ${msg.errmsg}`);
       } else {

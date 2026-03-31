@@ -25,6 +25,11 @@ async function main() {
 
   await feishu.start();
 
+  // Web channel（需求许愿池）
+  const { WebAdapter } = require("./channels/web");
+  const web = new WebAdapter();
+  await web.start();
+
   // 企业微信（可选，仅当配置了 WECOM_CORP_ID 时启动）
   if (process.env.WECOM_CORP_ID) {
     const { WeComAdapter } = require('./channels/wecom');

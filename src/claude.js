@@ -42,6 +42,12 @@ const MCP_COS_SERVER = {
   },
 };
 
+const MCP_SCRAPLING_SERVER = {
+  command: process.env.MCP_SCRAPLING_PATH || "/home/jarvis/pyenv/bin/scrapling",
+  args: ["mcp"],
+};
+
+
 /**
  * JSON 解析（多策略 fallback）
  */
@@ -193,12 +199,15 @@ class ClaudeClient {
         "feishu": MCP_FEISHU_SERVER,
         "video-downloader": MCP_VIDEO_SERVER,
         "tencent-cos": MCP_COS_SERVER,
+        "scrapling": MCP_SCRAPLING_SERVER,
+        // playwright MCP 不加入 Jarvis：每次初始化 Chromium 严重拖慢响应，普通对话不需要浏览器自动化
+        // 如需浏览器操作，使用本地 Claude Code + CDP 方案
       },
-      allowedTools: ["Read", "Glob", "Grep", "TodoWrite", "Write", "Edit", "Bash", "mcp__feishu__*", "mcp__video-downloader__*", "mcp__tencent-cos__*"],
+      allowedTools: ["Read", "Glob", "Grep", "TodoWrite", "Write", "Edit", "Bash", "mcp__feishu__*", "mcp__video-downloader__*", "mcp__tencent-cos__*", "mcp__scrapling__*"],
       hooks,
     };
 
-    const { effort, onProgress, onRetry } = chatOptions;
+    const { effort, onProgress, onRetry, onSessionInit } = chatOptions;
     if (effort) {
       options.effort = effort;
     }
@@ -251,11 +260,13 @@ class ClaudeClient {
 
     let resultText = '';
     let resultSessionId = '';
+    let lastProgressText = ''; // onProgress 最后一次文字，用于兜底
 
     try {
       for await (const message of query({ prompt: queryPrompt, options })) {
         if (message.type === 'system' && message.subtype === 'init') {
           resultSessionId = message.session_id;
+          if (onSessionInit) onSessionInit(resultSessionId); // 让 gateway 提前填入 sessionToChatId
           if (message.mcp_servers) {
             const serverInfo = Array.isArray(message.mcp_servers) ? message.mcp_servers.map(s => `${s.name}:${s.status}`) : Object.keys(message.mcp_servers);
             console.log('[Claude] MCP servers:', serverInfo.join(', '));
@@ -266,7 +277,10 @@ class ClaudeClient {
             const textBlocks = message.message.content.filter(b => b.type === 'text');
             if (textBlocks.length > 0) {
               const text = textBlocks.map(b => b.text).join('');
-              if (text.trim()) onProgress(text);
+              if (text.trim()) {
+                lastProgressText = text;
+                onProgress(text);
+              }
             }
           }
         }
@@ -305,9 +319,15 @@ class ClaudeClient {
       console.log(`[Claude] Response in ${elapsed}s, session: ${resultSessionId?.substring(0, 8)}...`);
 
       if (!resultText) {
-        const err = new Error('No result from Claude');
-        err.sessionId = resultSessionId; // P5-3: 附带 sessionId 防丢失
-        throw err;
+        // 兜底：Claude 有中间输出（进度文字）但没有最终结果时，用最后一次进度文字
+        if (lastProgressText) {
+          console.warn(`[Claude] No final result, using last progress text as fallback`);
+          resultText = lastProgressText;
+        } else {
+          const err = new Error('No result from Claude');
+          err.sessionId = resultSessionId;
+          throw err;
+        }
       }
 
       return { result: resultText, sessionId: resultSessionId };

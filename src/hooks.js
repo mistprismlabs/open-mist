@@ -296,6 +296,7 @@ let onPreCompact = null;
 let onPostCompact = null;
 let onStopFailure = null;
 let onToolFailure = null;
+let onTaskCreated = null;
 
 const toolUseTracker = async (input) => {
   if (input.hook_event_name !== "PostToolUse") return {};
@@ -413,6 +414,27 @@ const failureLogger = async (input) => {
 };
 
 // ============================================================
+// 6.7 任务创建通知（TaskCreated）
+// ============================================================
+
+const taskCreatedHook = async (input) => {
+  if (input.hook_event_name !== "TaskCreated") return {};
+
+  const taskId = input.task_id || '';
+  const subject = input.subject || '';
+  const sessionId = input.session_id;
+
+  console.log(`[Hooks] TaskCreated: ${taskId.substring(0, 8)} — ${subject.substring(0, 60)}`);
+
+  if (onTaskCreated) {
+    try { await onTaskCreated(sessionId, taskId, subject, input.description || ''); }
+    catch (e) { console.warn('[Hooks] taskCreated callback error:', e.message); }
+  }
+
+  return {};
+};
+
+// ============================================================
 // 7. Skill 审核白名单
 // ============================================================
 
@@ -464,6 +486,7 @@ function setPreCompactCallback(fn) { onPreCompact = fn; }
 function setPostCompactCallback(fn) { onPostCompact = fn; }
 function setStopFailureCallback(fn) { onStopFailure = fn; }
 function setToolFailureCallback(fn) { onToolFailure = fn; }
+function setTaskCreatedCallback(fn) { onTaskCreated = fn; }
 
 const hooks = {
   PreToolUse: [{ hooks: [securityGuard] }],
@@ -473,6 +496,7 @@ const hooks = {
   PreCompact: [{ hooks: [preCompactHook] }],
   PostCompact: [{ hooks: [postCompactHook] }],
   StopFailure: [{ hooks: [stopFailureHook] }],
+  TaskCreated: [{ hooks: [taskCreatedHook] }],
 };
 
 module.exports = {
@@ -483,6 +507,7 @@ module.exports = {
   setPostCompactCallback,
   setStopFailureCallback,
   setToolFailureCallback,
+  setTaskCreatedCallback,
   getExecutionLog,
   clearExecutionLog,
   approveSkill,

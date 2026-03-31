@@ -171,6 +171,7 @@ class FeishuAdapter {
 
     if (this.handled.has(messageId)) return;
     this.handled.set(messageId, Date.now());
+
     if (this.handled.size > 1000) {
       const cutoff = Date.now() - 5 * 60 * 1000;
       for (const [k, v] of this.handled) {
@@ -337,7 +338,15 @@ class FeishuAdapter {
     } catch (err) {
       const responseTime = (Date.now() - startTime) / 1000;
       console.error(`[Feishu] Error handling message ${messageId}:`, err.message);
-      await this._reply(messageId, `抱歉先生，处理时遇到了问题：${err.message}`);
+      // 会话切换通知：连续失败后自动切换，给友好提示
+      if (err.sessionSwitched) {
+        const shortId = (err.brokenSessionId || '').substring(0, 8);
+        await this._reply(messageId,
+          `⚠️ 当前会话（${shortId}）连续 ${err.failCount} 次无响应，已自动切换新会话。\n历史记录保留，请重新发送您的请求。`
+        );
+      } else {
+        await this._reply(messageId, `抱歉先生，处理时遇到了问题：${err.message}`);
+      }
 
       this._pushLog(chatId, text, responseTime, '失败');
       this.bitable.logChat({
