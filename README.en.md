@@ -71,10 +71,10 @@ flowchart TB
         AR[Archive<br>Permanent Log]
     end
 
-    subgraph MCP["MCP Tools"]
-        MB[feishu-bitable]
-        MV[video-downloader]
-        MC[tencent-cos]
+    subgraph MCP["Tools"]
+        LL[Lark CLI / lark-* skills]
+        MV[video-downloader MCP]
+        MC[tencent-cos MCP]
     end
 
     HB[heartbeat.js<br>Self-healing]
@@ -182,7 +182,7 @@ admin.js              # CLI management tool
 src/
   index.js              # Entry point, 40 lines
   gateway.js            # Message pipeline: memory retrieval -> Claude -> tracking
-  claude.js             # Agent SDK wrapper + MCP config
+  claude.js             # Agent SDK wrapper + Lark CLI / MCP wiring
   hooks.js              # Security: command filtering + path whitelisting + audit log
   session.js            # Session management
   user-profile.js       # User preferences (onboarding + personalization)
@@ -197,7 +197,7 @@ src/
     metrics.js          # Memory metrics
   heartbeat.js          # Self-healing daemon
   deployer.js           # Auto subdomain deployment (nginx)
-  mcp-*.mjs             # MCP tool servers
+  mcp-*.mjs             # Lightweight MCP servers (video / cloud storage)
 agents/                 # Recommendation engine (optional business module)
 scripts/                # Ops scripts
   check-updates.js      # Daily update checker (CLI, SDK, repo)
@@ -216,6 +216,14 @@ scripts/                # Ops scripts
 | tencent-cos | `src/mcp-cos.mjs` | Tencent Cloud object storage |
 
 MCP servers are spawned automatically by the Claude client. No separate setup needed.
+
+---
+
+## Tooling Model
+
+- Message ingress stays in project runtime adapters like `src/channels/feishu.js` and `src/channels/wecom.js`.
+- Claude-side Lark/Feishu platform operations use official Lark CLI / `lark-*` skills.
+- Project MCPs are kept only for lightweight non-Lark integrations such as video download and cloud storage.
 
 ---
 

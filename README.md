@@ -89,7 +89,7 @@ npm start
 
 **自愈** — 心跳守护每 30 分钟巡检，自动修复权限漂移、cron 失败、磁盘压力
 
-**工具** — 通过 MCP 协议扩展，内置飞书 API、视频下载、云存储三个 MCP Server
+**工具** — Claude 侧飞书平台操作统一使用官方 Lark CLI / `lark-*` skills；项目内仅保留少量 MCP（如视频下载、云存储）。
 
 ---
 
@@ -114,10 +114,10 @@ flowchart TB
         AR[永久存档]
     end
 
-    subgraph Tools["MCP 工具"]
-        MB[飞书 API]
-        MV[视频下载]
-        MC[云存储]
+    subgraph Tools["Tools"]
+        LL[Lark CLI / lark-* skills]
+        MV[视频下载 MCP]
+        MC[云存储 MCP]
     end
 
     HB[心跳守护]
@@ -137,7 +137,7 @@ flowchart TB
 src/
 ├── index.js                 # 入口
 ├── gateway.js               # 消息管线：记忆检索 → Claude → 追踪
-├── claude.js                # Agent SDK 封装 + MCP 配置
+├── claude.js                # Agent SDK 封装 + Lark CLI / MCP 工具接线
 ├── hooks.js                 # 安全守卫 + 审计日志 + Skill 白名单
 ├── session.js               # 多租户会话（过期、轮转、历史）
 ├── user-profile.js          # 用户偏好初始化
@@ -151,10 +151,17 @@ src/
 │   └── metrics.js           # 管线指标
 ├── heartbeat.js             # 自愈守护
 ├── deployer.js              # nginx 子域名自动部署
-├── mcp-feishu.mjs           # MCP: 飞书
 ├── mcp-video.mjs            # MCP: 视频
 └── mcp-cos.mjs              # MCP: 云存储
 ```
+
+---
+
+## 工具模型
+
+- 消息接入保留在项目 runtime 适配器中，如 `src/channels/feishu.js`、`src/channels/wecom.js`。
+- Claude 侧的 Lark/飞书平台操作统一使用官方 Lark CLI / `lark-*` skills。
+- 项目内的 MCP 仅保留轻量、非 Lark 平台能力的集成，如视频下载和云存储。
 
 ---
 
