@@ -10,7 +10,7 @@ const ENV_FILE = path.join(PROJECT_DIR, '.env');
 const ENV_EXAMPLE = path.join(PROJECT_DIR, '.env.example');
 const PKG = require(path.join(PROJECT_DIR, 'package.json'));
 const IS_LINUX = process.platform === 'linux';
-const SERVICE_NAME = process.env.SERVICE_NAME || 'feishu-bot.service';
+const SERVICE_NAME = process.env.SERVICE_NAME || 'openmist.service';
 
 // ─── ANSI 颜色（F10: 检测 NO_COLOR / 非 TTY） ───────────────
 const useColor = !process.env.NO_COLOR && process.stdout.isTTY;

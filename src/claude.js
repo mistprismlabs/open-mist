@@ -38,7 +38,7 @@ const MCP_COS_SERVER = {
 };
 
 const MCP_SCRAPLING_SERVER = {
-  command: process.env.MCP_SCRAPLING_PATH || "/home/jarvis/pyenv/bin/scrapling",
+  command: process.env.MCP_SCRAPLING_PATH || "scrapling",
   args: ["mcp"],
 };
 

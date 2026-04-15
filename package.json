@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/index.js",
     "admin": "node admin.js",
+    "weixin:login": "node scripts/weixin-login.js",
     "test": "node --test test/*.test.js test/**/*.test.js",
     "lint": "eslint src/ test/ scripts/"
   },

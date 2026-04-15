@@ -11,8 +11,8 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const PROJECT_DIR = process.env.PROJECT_DIR || path.join(__dirname, '..');
-const UPDATES_DIR = path.join(PROJECT_DIR, 'data', 'updates');
+const SERVICE_NAME = process.env.SERVICE_NAME || 'openmist.service';
+
 const AVAILABLE_FILE = path.join(UPDATES_DIR, 'available.json');
 const LAST_UPDATE_FILE = path.join(UPDATES_DIR, 'last-update.json');
 
@@ -107,9 +107,9 @@ function main() {
 
   // 重启服务
   if (needRestart) {
-    log('需要重启 feishu-bot.service...');
+    log(`需要重启 ${SERVICE_NAME}...`);
     try {
-      execSync('sudo systemctl restart feishu-bot.service', { timeout: 30_000 });
+      execSync(`sudo systemctl restart ${SERVICE_NAME}`, { timeout: 30_000 });
       log('服务重启成功');
     } catch (err) {
       log(`服务重启失败: ${err.message}`);

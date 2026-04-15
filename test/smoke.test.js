@@ -24,6 +24,7 @@ const MODULES = [
   { name: 'channels/feishu-message-api', path: '../src/channels/feishu-message-api' },
   { name: 'channels/feishu-media', path: '../src/channels/feishu-media' },
   { name: 'channels/wecom', path: '../src/channels/wecom' },
+  { name: 'channels/weixin', path: '../src/channels/weixin' },
 ];
 
 describe('smoke: all modules load without error', () => {

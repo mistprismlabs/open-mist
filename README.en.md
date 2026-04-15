@@ -136,6 +136,7 @@ Optional:
 | `DASHSCOPE_API_KEY` | Alibaba DashScope (vector embeddings) |
 | `ADMIN_USER_ID` | Admin open_id (multi-tenant migration, falls back to `FEISHU_OWNER_ID`) |
 | `WECOM_CORP_ID` | WeCom corp ID (enables WeCom channel) |
+| `WEIXIN_ENABLED` / `WEIXIN_TOKEN` | Weixin channel (direct token or native QR login via `npm run weixin:login`) |
 | `COS_SECRET_ID` / `COS_SECRET_KEY` | Tencent Cloud COS (object storage) |
 
 ### Run
@@ -144,10 +145,10 @@ Optional:
 npm start
 ```
 
-For production, use systemd:
+For production, use systemd with your configured service name (see `SERVICE_NAME` in `.env.example`):
 
 ```bash
-sudo systemctl enable --now feishu-bot.service
+sudo systemctl enable --now <your-service-name>
 ```
 
 ---
@@ -224,6 +225,26 @@ MCP servers are spawned automatically by the Claude client. No separate setup ne
 - Message ingress stays in project runtime adapters like `src/channels/feishu.js` and `src/channels/wecom.js`.
 - Claude-side Lark/Feishu platform operations use official Lark CLI / `lark-*` skills.
 - Project MCPs are kept only for lightweight non-Lark integrations such as video download and cloud storage.
+
+---
+
+## Public Boundary
+
+`open-mist` is the public, reusable core. It should not ship private deployment defaults.
+
+The following must come from `.env`, deployment scripts, or a downstream private repo, not from hardcoded source defaults:
+
+- runtime user/group, systemd service names, auxiliary service names, healthcheck URLs
+- SSH host aliases, private domains, private filesystem paths, buckets, host-specific conventions
+- private personas, role presets, notification targets, internal ops workflows
+- API keys, tokens, open_id/chat_id values, bucket IDs, and other instance identifiers
+
+Recommended split:
+
+- `open-mist`: public core and reusable capabilities
+- private instance repo: deployment overlay, private persona, private service wiring, private ops scripts
+
+If a change cannot be published as-is, parameterize it first or move it into the private repo instead of baking private defaults into `open-mist`.
 
 ---
 

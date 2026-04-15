@@ -100,5 +100,5 @@ AI 能力
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `APP_USER` | 运行用户名（用于权限检查和提示） | `openmist` |
-| `SERVICE_NAME` | systemd 服务名 | `feishu-bot.service` |
+| `SERVICE_NAME` | systemd 服务名 | `openmist.service` |
 | `NO_COLOR` | 设置后禁用彩色输出 | - |

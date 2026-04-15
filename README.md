@@ -59,6 +59,7 @@ npm start
 | `FEISHU_APP_ID` / `APP_SECRET` | 飞书通道 |
 | `WECOM_BOT_ID` / `BOT_SECRET` | 企微 Bot（WebSocket 长连接） |
 | `WECOM_CORP_ID` / `AGENT_SECRET` | 企微 App（HTTP 回调） |
+| `WEIXIN_ENABLED` / `WEIXIN_TOKEN` | 微信龙虾通道（可手填 token，或使用 `npm run weixin:login` 原生扫码落盘） |
 | `DASHSCOPE_API_KEY` | 向量记忆（不配则降级为关键词） |
 | `COS_SECRET_ID` / `SECRET_KEY` | 腾讯云对象存储 |
 
@@ -162,6 +163,26 @@ src/
 - 消息接入保留在项目 runtime 适配器中，如 `src/channels/feishu.js`、`src/channels/wecom.js`。
 - Claude 侧的 Lark/飞书平台操作统一使用官方 Lark CLI / `lark-*` skills。
 - 项目内的 MCP 仅保留轻量、非 Lark 平台能力的集成，如视频下载和云存储。
+
+---
+
+## 开源边界
+
+`open-mist` 是通用能力主仓，不承载任何私有实例默认值。
+
+以下内容必须通过 `.env`、部署脚本或下游私有仓提供，不应在源码里写死：
+
+- 运行用户名 / 用户组、systemd 服务名、辅助服务名、健康检查地址
+- SSH 远端别名、私有域名、私有路径、存储桶、私有主机约定
+- 私有人设、角色预设、通知目标、企业内部运维流程
+- API keys、tokens、open_id、chat_id、bucket id 等实例级标识
+
+推荐分层：
+
+- `open-mist`：通用能力、开源可发布代码
+- 私有实例仓：部署覆盖、私有 persona、私有服务接线、私有运维脚本
+
+如果某项改动无法直接公开，应先参数化或下沉到私有仓，而不是把私有默认值带进 `open-mist`。
 
 ---
 

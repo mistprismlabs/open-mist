@@ -19,4 +19,5 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - run: npm install
       - run: npm run lint
+      - run: node --test test/public-safety.test.js
       - run: npm test

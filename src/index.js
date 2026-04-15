@@ -6,6 +6,7 @@ const { SessionStore } = require('./session');
 const { BitableLogger } = require('./bitable');
 const { TaskExecutor } = require('./task-executor');
 const { Deployer } = require('./deployer');
+const { WeixinAdapter } = require('./channels/weixin');
 
 async function main() {
   const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
@@ -35,6 +36,11 @@ async function main() {
     const { WeComAdapter } = require('./channels/wecom');
     const wecom = new WeComAdapter({ gateway });
     await wecom.start();
+  }
+
+  if (String(process.env.WEIXIN_ENABLED).toLowerCase() === 'true') {
+    const weixin = new WeixinAdapter({ gateway });
+    await weixin.start();
   }
 
   console.log(`[${BOT_NAME}] Gateway running ✓`);
