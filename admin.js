@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync, spawn } = require('child_process');
+const { parseEnvFile, replaceEnvVar } = require('./src/config/env-file');
 
 const PROJECT_DIR = __dirname;
 const ENV_FILE = path.join(PROJECT_DIR, '.env');
@@ -54,38 +55,6 @@ function formatBytes(n) {
 function progressBar(pct, width = 16) {
   const filled = Math.round(pct * width);
   return '\u2588'.repeat(filled) + '\u2591'.repeat(width - filled);
-}
-
-function parseEnvFile(content) {
-  const entries = [];
-  for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
-      entries.push({ type: 'comment', raw: line });
-    } else {
-      const eq = line.indexOf('=');
-      if (eq > 0) {
-        entries.push({ type: 'var', key: line.slice(0, eq).trim(), value: line.slice(eq + 1).trim(), raw: line });
-      } else {
-        entries.push({ type: 'comment', raw: line });
-      }
-    }
-  }
-  return entries;
-}
-
-function replaceEnvVar(content, key, newValue) {
-  const lines = content.split('\n');
-  let found = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].match(new RegExp(`^${key}\\s*=`))) {
-      lines[i] = `${key}=${newValue}`;
-      found = true;
-      break;
-    }
-  }
-  if (!found) lines.push(`${key}=${newValue}`);
-  return lines.join('\n');
 }
 
 function isSensitive(key) {
@@ -453,15 +422,17 @@ async function testSingleAPI(name) {
       const authToken = env.ANTHROPIC_AUTH_TOKEN;
       const apiKey = env.ANTHROPIC_API_KEY;
       const baseUrl = env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+      const model = env.CLAUDE_MODEL?.trim();
       const headers = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01' };
       if (authToken) headers['authorization'] = `Bearer ${authToken}`;
       else if (apiKey) headers['x-api-key'] = apiKey;
       else { clearTimeout(timer); return { name: 'Claude API', ok: false, detail: '未配置' }; }
+      if (!model) { clearTimeout(timer); return { name: 'Claude API', ok: false, detail: '缺少 CLAUDE_MODEL' }; }
 
       const start = Date.now();
       const res = await fetch(`${baseUrl}/v1/messages`, {
         method: 'POST', headers, signal: ctrl.signal,
-        body: JSON.stringify({ model: env.CLAUDE_MODEL || 'claude-opus-4-6', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+        body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
       });
       clearTimeout(timer);
       const ms = Date.now() - start;

@@ -21,20 +21,52 @@
 
 > 你只需要一台 Ubuntu 服务器 + 任意 AI 编程工具（Claude Code / Cursor / Windsurf）
 
-把下面这段提示词发给你的 AI，它会通过 SSH 帮你完成一切：
+把下面这段提示词发给你的 AI，它会通过 SSH 帮你完成首次部署：
 
 ```
 SSH 连接我的服务器 <IP>，部署 OpenMist（https://github.com/mistprismlabs/open-mist）。
 
 步骤：
-1. 安装 Node.js 和 Claude Code CLI
-2. 克隆仓库，npm install
-3. 引导我配置 .env — 逐个问我要 API Key，没有的跳过
-4. 配置 systemd 开机自启
-5. 部署完成后验证服务正常
+1. 先读取 docs/deploy.md 和 .claude/skills/openmist-bootstrap.md
+2. 严格按执行协议分阶段推进，不要跳步骤
+3. 登录后先运行 scripts/check-runtime.sh
+4. 优先调用仓库里的 bootstrap/check 脚本，不要现场重写整套流程
+5. 引导我配置 .env — 只在必要时逐个问我要密钥或授权
+6. 配置 systemd 开机自启
+7. 部署完成后执行 scripts/check-config.sh、scripts/check-service.sh 和 npm test
 ```
 
 AI 会自动搭建环境、安装依赖、配置服务，遇到需要密钥的地方停下来问你。
+
+标准部署文档见 [docs/deploy.md](docs/deploy.md)。
+如果你的 AI 支持仓库内技能，也可以让它先读取 [.claude/skills/openmist-bootstrap.md](.claude/skills/openmist-bootstrap.md)。
+
+### 你需要准备什么
+
+- 一台可以通过 SSH 登录的 Ubuntu 服务器
+- 一个可登录账号；最好具备 `sudo`
+- 至少一组 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN`
+- 如果要启用飞书 / 企微 / 微信通道，再准备对应平台凭据
+
+### AI 会自己做什么
+
+- 检查 SSH 后的服务器初始状态
+- 创建普通部署用户
+- 安装系统依赖、Node.js、`claude`、`lark-cli`
+- `git clone`、`npm install`
+- 生成 `.env`
+- 调用 `bootstrap/check` 脚本完成检查、配置和 `systemd` 启动
+- 运行 `scripts/check-runtime.sh`、`scripts/check-config.sh`、`scripts/check-service.sh`、`npm test`
+
+### 必须由你参与的步骤
+
+- 提供 API key、app secret、token、chat_id、open_id 等实例密钥
+- 完成 `claude` 登录授权
+- 完成 `lark-cli` 的扫码或网页登录授权
+- 确认飞书 / 企微开放平台侧设置是否已开通
+- 决定私有域名、私有路径、私有服务名等实例差异
+
+这意味着现在的默认部署成本已经很低：AI 负责流程和执行，你主要负责密钥、授权和平台侧确认。
 
 <details>
 <summary><b>手动部署</b></summary>
@@ -51,19 +83,29 @@ npm start
 
 ### 环境变量
 
-只有 `ANTHROPIC_API_KEY` 是必填的，其余按需配置。没有凭证的通道不会启动。
+默认至少需要一组 Anthropic 兼容凭据。没有凭证的通道不会启动。
 
 | 变量 | 说明 |
 |------|------|
-| `ANTHROPIC_API_KEY` | **必填** — Claude API 密钥 |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | **至少其一必填** — Anthropic 或 Anthropic 兼容提供商的访问凭据 |
+| `ANTHROPIC_BASE_URL` | 可选 — Anthropic 兼容提供商入口，例如 MiniMax 可配置为 `https://api.minimaxi.com/anthropic` |
+| `CLAUDE_MODEL` / `RECOMMEND_MODEL` | 使用 Anthropic 兼容提供商时建议显式填写，不要依赖 Anthropic 默认模型名 |
 | `FEISHU_APP_ID` / `APP_SECRET` | 飞书通道 |
-| `WECOM_BOT_ID` / `BOT_SECRET` | 企微 Bot（WebSocket 长连接） |
+| `WECOM_BOT_ID` / `WECOM_BOT_SECRET` | 企微 Bot（WebSocket 长连接） |
 | `WECOM_CORP_ID` / `AGENT_SECRET` | 企微 App（HTTP 回调） |
 | `WEIXIN_ENABLED` / `WEIXIN_TOKEN` | 微信龙虾通道（可手填 token，或使用 `npm run weixin:login` 原生扫码落盘） |
 | `DASHSCOPE_API_KEY` | 向量记忆（不配则降级为关键词） |
 | `COS_SECRET_ID` / `SECRET_KEY` | 腾讯云对象存储 |
 
 完整列表见 [.env.example](.env.example)
+
+如果你使用 MiniMax 这类 Anthropic 兼容提供商，常见配置是：
+
+```bash
+ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+CLAUDE_MODEL=MiniMax-M2.7
+RECOMMEND_MODEL=MiniMax-M2.7-highspeed
+```
 
 ---
 

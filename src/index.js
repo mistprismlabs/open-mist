@@ -7,10 +7,12 @@ const { BitableLogger } = require('./bitable');
 const { TaskExecutor } = require('./task-executor');
 const { Deployer } = require('./deployer');
 const { WeixinAdapter } = require('./channels/weixin');
+const { resolveChannelBootstrapPlan } = require('./channel-bootstrap');
 
 async function main() {
   const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
   console.log(`[${BOT_NAME}] Starting gateway...`);
+  const channelPlan = resolveChannelBootstrapPlan(process.env);
 
   const gateway = new Gateway({
     session: new SessionStore(),
@@ -24,18 +26,23 @@ async function main() {
     deployer: new Deployer(),
   });
 
-  await feishu.start();
+  if (channelPlan.feishu.enabled) {
+    await feishu.start();
+  } else {
+    console.log(`[${BOT_NAME}] Feishu channel skipped (missing credentials)`);
+  }
 
   // Web channel（需求许愿池）
   const { WebAdapter } = require("./channels/web");
   const web = new WebAdapter();
   await web.start();
 
-  // 企业微信（可选，仅当配置了 WECOM_CORP_ID 时启动）
-  if (process.env.WECOM_CORP_ID) {
+  if (channelPlan.wecom.enabled) {
     const { WeComAdapter } = require('./channels/wecom');
     const wecom = new WeComAdapter({ gateway });
     await wecom.start();
+  } else {
+    console.log(`[${BOT_NAME}] WeCom channel skipped (missing credentials)`);
   }
 
   if (String(process.env.WEIXIN_ENABLED).toLowerCase() === 'true') {

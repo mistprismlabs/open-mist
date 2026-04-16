@@ -8,7 +8,16 @@ const execFileAsync = promisify(execFile);
 const IMAGE_COMPRESS_THRESHOLD = 512 * 1024; // 512KB 以上才压缩
 const IMAGE_MAX_DIM = 1024;                   // 压缩后长边最大 1024px
 
-const DEFAULT_MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-6';
+function resolveConfiguredModel(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
+const DEFAULT_MODEL = resolveConfiguredModel(process.env.CLAUDE_MODEL);
 const BASE_URL = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
 const API_KEY = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
 const MEDIA_DIR = path.join(__dirname, '..', 'media');
@@ -107,7 +116,6 @@ function _fixUnescapedQuotes(s) {
 
 function buildQueryOptions(model, hooks, extra = {}) {
   const options = {
-    model,
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
     maxTurns: 50,
@@ -124,6 +132,10 @@ function buildQueryOptions(model, hooks, extra = {}) {
     hooks,
   };
 
+  if (model) {
+    options.model = model;
+  }
+
   if (extra.effort) {
     options.effort = extra.effort;
   }
@@ -137,7 +149,7 @@ function buildQueryOptions(model, hooks, extra = {}) {
 
 class ClaudeClient {
   constructor({ model } = {}) {
-    this.model = model || DEFAULT_MODEL;
+    this.model = resolveConfiguredModel(model, DEFAULT_MODEL);
     this.baseUrl = BASE_URL;
     this.apiKey = API_KEY;
   }
@@ -146,8 +158,12 @@ class ClaudeClient {
    * 单轮 Messages API 调用（推荐管线用）
    */
   async complete(system, userMessage, options = {}) {
-    const model = options.model || this.model;
+    const model = resolveConfiguredModel(options.model, this.model);
     const maxTokens = options.maxTokens || 4096;
+
+    if (!model) {
+      throw new Error('CLAUDE_MODEL is required for direct Anthropic API calls');
+    }
 
     const body = {
       model,
@@ -340,4 +356,4 @@ class ClaudeClient {
   }
 }
 
-module.exports = { ClaudeClient, buildQueryOptions, parseJSON, MEDIA_DIR, _fixUnescapedQuotes };
+module.exports = { ClaudeClient, buildQueryOptions, parseJSON, MEDIA_DIR, _fixUnescapedQuotes, resolveConfiguredModel };

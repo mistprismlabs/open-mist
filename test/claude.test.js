@@ -37,14 +37,14 @@ describe('_fixUnescapedQuotes', () => {
 
 describe('buildQueryOptions', () => {
   it('does not expose the retired feishu MCP', () => {
-    const options = buildQueryOptions('claude-opus-4-6', {});
+    const options = buildQueryOptions('test-model', {});
 
     assert.ok(!('feishu' in options.mcpServers));
     assert.ok(!options.allowedTools.includes('mcp__feishu__*'));
   });
 
   it('keeps the remaining MCP servers and core settings', () => {
-    const options = buildQueryOptions('claude-opus-4-6', {});
+    const options = buildQueryOptions('test-model', {});
 
     assert.deepEqual(Object.keys(options.mcpServers).sort(), ['scrapling', 'tencent-cos', 'video-downloader']);
     assert.ok(options.allowedTools.includes('mcp__video-downloader__*'));
@@ -55,13 +55,19 @@ describe('buildQueryOptions', () => {
   });
 
   it('applies optional effort and resume values', () => {
-    const options = buildQueryOptions('claude-opus-4-6', {}, {
+    const options = buildQueryOptions('test-model', {}, {
       effort: 'high',
       resume: 'session-123',
     });
 
     assert.equal(options.effort, 'high');
     assert.equal(options.resume, 'session-123');
+  });
+
+  it('omits model when no explicit model is provided', () => {
+    const options = buildQueryOptions('', {});
+
+    assert.ok(!('model' in options));
   });
 });
 

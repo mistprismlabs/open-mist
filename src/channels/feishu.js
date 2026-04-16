@@ -12,6 +12,7 @@ const { approveSkill } = require("../hooks");
 const { createCardBuilder } = require("./feishu-cards");
 const { FeishuMessageAPI } = require("./feishu-message-api");
 const { FeishuMedia } = require("./feishu-media");
+const { classifyFeishuStartupError } = require("./feishu-startup");
 
 const STALE_THRESHOLD_MS = 30 * 1000;
 const SUPPORTED_MSG_TYPES = ["text", "image", "post", "file"];
@@ -107,8 +108,17 @@ class FeishuAdapter {
       appSecret: process.env.FEISHU_APP_SECRET,
     });
 
-    await wsClient.start({ eventDispatcher });
-    console.log("[Feishu] WebSocket connected (with card action handler)");
+    try {
+      await wsClient.start({ eventDispatcher });
+      console.log("[Feishu] WebSocket connected (with card action handler)");
+    } catch (error) {
+      const startupError = classifyFeishuStartupError(error);
+      if (startupError.kind === 'platform_prerequisite') {
+        console.warn(`[Feishu] ${startupError.message}`);
+        return;
+      }
+      throw startupError;
+    }
 
     // 启动时检查是否有刚完成的更新需要通知
     this._checkLastUpdate();

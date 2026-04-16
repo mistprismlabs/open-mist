@@ -12,6 +12,7 @@ const path = require("path");
 // ── 配置 ──────────────────────────────────────────────
 const CLAUDE_API_BASE = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
 const CLAUDE_API_KEY = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+const SUMMARY_MODEL = process.env.RECOMMEND_MODEL || process.env.CLAUDE_MODEL || "";
 const { enqueue } = require('./notify-queue');
 const NOTIFY_CHAT_ID = process.env.NOTIFY_CHAT_ID;
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -224,6 +225,7 @@ function filterCommits(commits) {
 // ── AI 摘要生成 ──────────────────────────────────────
 async function generateSummary(allUpdates) {
   if (!CLAUDE_API_KEY) return null;
+  if (!SUMMARY_MODEL) return null;
 
   // 只给 AI 有实际更新的仓库数据
   const updatesWithContent = allUpdates.filter(
@@ -254,7 +256,7 @@ async function generateSummary(allUpdates) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: process.env.RECOMMEND_MODEL || "claude-haiku-4-5-20251001",
+        model: SUMMARY_MODEL,
         max_tokens: 1024,
         messages: [{
           role: "user",

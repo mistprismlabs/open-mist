@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { resolveConfiguredModel } = require('./claude');
 
 const PROJECT_DIR = process.env.PROJECT_DIR || path.resolve(__dirname, '..');
 const TASKS_DIR = process.env.TASKS_DIR || path.join(PROJECT_DIR, 'data/tasks');
@@ -39,9 +40,9 @@ class TaskExecutor {
 
     try {
       const query = await loadSDK();
+      const configuredModel = resolveConfiguredModel(process.env.CLAUDE_MODEL);
 
       const options = {
-        model: process.env.CLAUDE_MODEL || 'claude-opus-4-6',
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         maxTurns: MAX_TURNS,
@@ -56,6 +57,10 @@ class TaskExecutor {
           },
         ],
       };
+
+      if (configuredModel) {
+        options.model = configuredModel;
+      }
 
       const prompt = `你是一个项目构建助手。用户要求你创建一个项目。
 

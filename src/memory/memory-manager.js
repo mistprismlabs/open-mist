@@ -13,7 +13,7 @@ const { ShortTermMemory } = require("./short-term");
 const { VectorStore } = require("./vector-store");
 const { generateUUID } = require("./types");
 const { Archive } = require("../archive");
-const { ClaudeClient } = require("../claude");
+const { ClaudeClient, resolveConfiguredModel } = require("../claude");
 
 // 压缩触发阈值
 const COMPRESS_SIZE_THRESHOLD = 8 * 1024 * 1024;  // 8MB
@@ -24,7 +24,7 @@ const COMPRESS_TIME_THRESHOLD = 2 * 60 * 60 * 1000; // 2 小时
 const VECTOR_WEIGHT = 0.7;
 const KEYWORD_WEIGHT = 0.3;
 
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const MEMORY_MODEL = resolveConfiguredModel(process.env.RECOMMEND_MODEL, process.env.CLAUDE_MODEL);
 const DEFAULT_USER_ID = process.env.ADMIN_USER_ID || process.env.FEISHU_OWNER_ID || 'default';
 
 class MemoryManager {
@@ -197,17 +197,19 @@ class MemoryManager {
     if (userMessages.length === 0) return "未知意图";
 
     // 尝试用 Haiku 提取精炼意图
-    try {
+    if (MEMORY_MODEL) {
+      try {
       const texts = userMessages.slice(0, 5).map(m => m.content).join("\n");
       const result = await this._getClaudeClient().complete(
         "你是一个意图提取器。用一句话概括用户的核心意图（20字以内），只输出意图本身，不要解释。",
         texts,
-        { model: HAIKU_MODEL, maxTokens: 100 }
+        { model: MEMORY_MODEL, maxTokens: 100 }
       );
       const intent = result.text.trim();
       if (intent && intent.length <= 100) return intent;
-    } catch (err) {
-      console.warn("[MemoryManager] Haiku intent extraction failed, fallback:", err.message);
+      } catch (err) {
+        console.warn("[MemoryManager] Intent extraction failed, fallback:", err.message);
+      }
     }
 
     // fallback: 截取前 100 字
@@ -218,13 +220,14 @@ class MemoryManager {
   async _extractKeyDecisions(messages) {
     if (messages.length < 2) return [];
 
-    try {
+    if (MEMORY_MODEL) {
+      try {
       const texts = messages.slice(0, 20).map(m => `[${m.role}]: ${m.content}`).join("\n");
       const result = await this._getClaudeClient().complete(
         "你是一个决策提取器。从对话中提取关键决策，返回 JSON 数组，每条 < 60 字，最多 3 条。只输出 JSON 数组，例如 [\"决策1\", \"决策2\"]。如果没有明确决策，返回空数组 []。",
         texts,
         {
-          model: HAIKU_MODEL,
+          model: MEMORY_MODEL,
           maxTokens: 300,
           schema: {
             type: "object",
@@ -248,8 +251,9 @@ class MemoryManager {
         const { parseJSON } = require("../claude");
         return parseJSON(result.text).slice(0, 3);
       }
-    } catch (err) {
-      console.warn("[MemoryManager] Key decisions extraction failed:", err.message);
+      } catch (err) {
+        console.warn("[MemoryManager] Key decisions extraction failed:", err.message);
+      }
     }
     return [];
   }

@@ -3,6 +3,7 @@ const express = require('express');
 const https = require('https');
 const http = require('http');
 const path = require('path');
+const { resolveConfiguredModel } = require('../claude');
 
 const SYSTEM_PROMPT = `你是一位顶级产品经理，专门帮助非技术用户把模糊想法变成可以直接执行的需求方案。
 
@@ -60,6 +61,14 @@ const SYSTEM_PROMPT = `你是一位顶级产品经理，专门帮助非技术用
 对话语言：全程中文，亲切自然。`;
 
 const INIT_MESSAGE = '你好！我是你的需求顾问 🙋 今天有什么想法或者烦恼，随便说，我帮你理清楚～';
+
+function requireWebModel(scope) {
+  const model = resolveConfiguredModel(process.env.CLAUDE_MODEL, process.env.RECOMMEND_MODEL);
+  if (!model) {
+    throw new Error(`${scope} requires CLAUDE_MODEL or RECOMMEND_MODEL`);
+  }
+  return model;
+}
 
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
@@ -165,7 +174,7 @@ async function findFeishuRecord(username) {
 async function generateDemoCode(fields) {
   const apiKey  = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
   const baseUrl = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
-  const model   = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+  const model   = requireWebModel('Demo generation');
   const isHttps = baseUrl.protocol === 'https:';
   const mod     = isHttps ? https : http;
 
@@ -303,7 +312,7 @@ async function executeDemo(username) {
 async function evaluateRequirement(summary, recordId) {
   const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
   const baseUrl = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
-  const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+  const model = requireWebModel('Requirement evaluation');
   const isHttps = baseUrl.protocol === 'https:';
   const mod = isHttps ? https : http;
 
@@ -455,7 +464,7 @@ class WebAdapter {
       // 调用 Claude Messages API (streaming)
       const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
       const baseUrl = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
-      const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+      const model = requireWebModel('Web chat');
 
       const bodyStr = JSON.stringify({
         model,
@@ -538,7 +547,7 @@ class WebAdapter {
 
       const apiKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
       const baseUrl = new URL(process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com');
-      const model = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
+      const model = requireWebModel('Requirement summarization');
       const isHttps = baseUrl.protocol === 'https:';
       const mod = isHttps ? require('https') : require('http');
 

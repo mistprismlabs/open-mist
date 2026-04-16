@@ -34,7 +34,6 @@ docs/       — API 参考文档
 
 ## 可用 MCP Servers
 
-- **feishu-bitable**: 飞书多维表格操作
 - **video-downloader**: 视频下载
 - **tencent-cos**: 腾讯云对象存储
 

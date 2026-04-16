@@ -10,7 +10,7 @@
 | 维度 | 微信公众号（MP）| 企业微信（WeCom）|
 |------|:---:|:---:|
 | 消息接收方式 | HTTP 回调（Webhook）| HTTP 回调 **或** WebSocket 长连接 |
-| 现有项目实现 | - | WebSocket（`feishu-bot.service` 同类架构）|
+| 现有项目实现 | - | WebSocket（与 `openmist.service` 同类的常驻 Node.js 服务架构）|
 | 连接方向 | 微信推送→开发者 | 微信推送→开发者 / 开发者主动连接 |
 | 是否需要公网 IP | 是（或内网穿透）| 是（HTTP 回调）/ 否（WebSocket 客户端模式）|
 
@@ -176,7 +176,7 @@ if (hash === msgSignature) {
 
 ```
 飞书机器人（现有）:
-  飞书服务器 <--WebSocket长连接-- feishu-bot.service(Node.js)
+  飞书服务器 <--WebSocket长连接-- openmist.service(Node.js)
   ↓ 收到消息
   Agent SDK → Claude API → 回复
 

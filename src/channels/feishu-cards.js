@@ -343,7 +343,7 @@ function createCardBuilder({ session, gateway, memory, metrics }) {
 
   function buildTaskCard() {
     return _createCard('执行任务', 'turquoise', [
-      { tag: 'markdown', content: '让 Jarvis 在服务器上执行任务，完成后发送通知。\n\n**能做什么**\n- 服务器运维：检查状态、分析日志、清理文件、查看进程\n- 数据操作：抓取网页、更新多维表格、生成报告\n- 项目构建：生成网页/应用并自动部署\n- 脚本执行：运行任意 shell 或 Node.js 脚本' },
+      { tag: 'markdown', content: '让助手在服务器上执行任务，完成后发送通知。\n\n**能做什么**\n- 服务器运维：检查状态、分析日志、清理文件、查看进程\n- 数据操作：抓取网页、更新多维表格、生成报告\n- 项目构建：生成网页/应用并自动部署\n- 脚本执行：运行任意 shell 或 Node.js 脚本' },
       { tag: 'hr' },
       {
         tag: 'form',
@@ -467,14 +467,14 @@ function createCardBuilder({ session, gateway, memory, metrics }) {
             tag: 'input',
             name: 'agent_name',
             placeholder: { tag: 'plain_text', content: '助手名称' },
-            default_value: 'Jarvis',
+            default_value: process.env.BOT_NAME || 'OpenMist',
             width: 'fill',
           },
           {
             tag: 'input',
             name: 'user_name',
             placeholder: { tag: 'plain_text', content: '你希望被怎么称呼' },
-            default_value: '先生',
+            default_value: '',
             width: 'fill',
           },
           {

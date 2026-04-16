@@ -95,6 +95,36 @@ flowchart TB
 
 ## Quick Start
 
+For a fresh Ubuntu server, start with the deployment guide: [docs/deploy.md](docs/deploy.md).
+If your AI agent supports repo-local skills, point it at [.claude/skills/openmist-bootstrap.md](.claude/skills/openmist-bootstrap.md) and have it follow the staged execution protocol instead of improvising the deployment flow.
+
+### What you need to bring
+
+- An Ubuntu server you can already reach over SSH
+- A login account; `sudo` is strongly recommended
+- At least one of `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`
+- Any platform credentials for Feishu / WeCom / Weixin if you want those channels enabled
+
+### What the AI can do on its own
+
+- Inspect the server baseline after SSH login
+- Create a non-root deployment user
+- Install system dependencies, Node.js, `claude`, and `lark-cli`
+- Clone the repo and run `npm install`
+- Create `.env`
+- Use the repo bootstrap/check scripts to validate config and start `systemd`
+- Run `scripts/check-runtime.sh`, `scripts/check-config.sh`, `scripts/check-service.sh`, and `npm test`
+
+### What still requires a human
+
+- Providing API keys, app secrets, tokens, chat IDs, or open IDs
+- Completing `claude` login / device authorization
+- Completing `lark-cli` login or scan-based authorization
+- Confirming Feishu / WeCom platform-side setup
+- Deciding private domains, paths, or service names for the target instance
+
+In practice, this means the deployment cost is now fairly low: the AI drives the flow and execution, while you only step in for credentials, authorization, and platform-side confirmation.
+
 ### Prerequisites
 
 - Node.js >= 18
@@ -123,8 +153,8 @@ Required:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `CLAUDE_MODEL` | Model ID, default `claude-opus-4-6` |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | At least one of them is required for Anthropic or any Anthropic-compatible provider |
+| `CLAUDE_MODEL` | Explicit model ID. Required when you use a custom Anthropic-compatible provider |
 | `FEISHU_APP_ID` | Feishu app ID |
 | `FEISHU_APP_SECRET` | Feishu app secret |
 
@@ -132,12 +162,20 @@ Optional:
 
 | Variable | Description |
 |----------|-------------|
-| `ANTHROPIC_BASE_URL` | API endpoint, default `https://api.anthropic.com` |
+| `ANTHROPIC_BASE_URL` | API endpoint, default `https://api.anthropic.com`. For MiniMax, use `https://api.minimaxi.com/anthropic` |
 | `DASHSCOPE_API_KEY` | Alibaba DashScope (vector embeddings) |
 | `ADMIN_USER_ID` | Admin open_id (multi-tenant migration, falls back to `FEISHU_OWNER_ID`) |
 | `WECOM_CORP_ID` | WeCom corp ID (enables WeCom channel) |
 | `WEIXIN_ENABLED` / `WEIXIN_TOKEN` | Weixin channel (direct token or native QR login via `npm run weixin:login`) |
 | `COS_SECRET_ID` / `COS_SECRET_KEY` | Tencent Cloud COS (object storage) |
+
+If you use an Anthropic-compatible provider such as MiniMax, a common setup is:
+
+```bash
+ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+CLAUDE_MODEL=MiniMax-M2.7
+RECOMMEND_MODEL=MiniMax-M2.7-highspeed
+```
 
 ### Run
 
@@ -212,7 +250,6 @@ scripts/                # Ops scripts
 
 | Tool | File | Purpose |
 |------|------|---------|
-| feishu-bitable | `src/mcp-bitable.mjs` | Read/write Feishu Bitable records |
 | video-downloader | `src/mcp-video.mjs` | Download videos (YouTube, Bilibili, etc.) |
 | tencent-cos | `src/mcp-cos.mjs` | Tencent Cloud object storage |
 

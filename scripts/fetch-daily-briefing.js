@@ -15,10 +15,12 @@ const NOTIFY_CHAT_ID = process.env.NOTIFY_CHAT_ID;
 const OWNER_OPEN_ID = process.env.FEISHU_OWNER_ID || '';
 const DATA_DIR = path.join(__dirname, "..", "data");
 const CONFIG_PATH = path.join(DATA_DIR, "briefing-config.json");
-const UA = "Mozilla/5.0 (compatible; JarvisBriefing/1.0)";
+const UA = "Mozilla/5.0 (compatible; OpenMistBriefing/1.0)";
 const ENGLISH_SOURCES = new Set(["HN", "McKinsey", "GitHub", "arXiv"]);
 const CLAUDE_API_BASE = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
 const CLAUDE_API_KEY = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+const RECOMMEND_MODEL = process.env.RECOMMEND_MODEL || process.env.CLAUDE_MODEL || "";
+const PROXY_URL = process.env.BRIEFING_PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || "";
 
 const client = new lark.Client({
   appId: process.env.FEISHU_APP_ID,
@@ -27,14 +29,14 @@ const client = new lark.Client({
   domain: lark.Domain.Feishu,
 });
 
-// ── 代理设置（海外源需要，mihomo mixed port） ──
+// ── 代理设置（海外源按环境变量启用） ──
 
 let proxyDispatcher = null;
 try {
   const { ProxyAgent } = require("undici");
-  proxyDispatcher = new ProxyAgent("http://127.0.0.1:7890");
+  if (PROXY_URL) proxyDispatcher = new ProxyAgent(PROXY_URL);
 } catch {
-  console.warn("[proxy] undici unavailable, overseas sources may fail");
+  if (PROXY_URL) console.warn("[proxy] undici unavailable, overseas sources may fail");
 }
 
 async function fetchText(url, overseas = false) {
@@ -275,6 +277,7 @@ async function setupBitable() {
 // ── 英文标题翻译 ──
 
 async function translateBatch(titles) {
+  if (!RECOMMEND_MODEL) throw new Error("RECOMMEND_MODEL or CLAUDE_MODEL is required for translation");
   const numbered = titles.map((t, i) => `${i + 1}. ${t}`).join("\n");
   const res = await fetch(CLAUDE_API_BASE + "/v1/messages", {
     method: "POST",
@@ -284,7 +287,7 @@ async function translateBatch(titles) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
+      model: RECOMMEND_MODEL,
       max_tokens: 4096,
       messages: [{
         role: "user",
@@ -306,6 +309,10 @@ async function translateBatch(titles) {
 async function translateItems(items) {
   const englishItems = items.filter(it => ENGLISH_SOURCES.has(it.来源));
   if (!englishItems.length || !CLAUDE_API_KEY) return;
+  if (!RECOMMEND_MODEL) {
+    console.warn("[翻译] skip: RECOMMEND_MODEL or CLAUDE_MODEL not set");
+    return;
+  }
 
   console.log(`[翻译] ${englishItems.length} 条英文内容...`);
   const batchSize = 50;
