@@ -16,6 +16,7 @@ const { classifyFeishuStartupError } = require("./feishu-startup");
 
 const STALE_THRESHOLD_MS = 30 * 1000;
 const SUPPORTED_MSG_TYPES = ["text", "image", "post", "file"];
+const FEISHU_PROGRESS_PREFIX = 'feishu:';
 
 class FeishuAdapter {
   constructor({ gateway, bitable, taskExecutor, deployer }) {
@@ -33,7 +34,9 @@ class FeishuAdapter {
     this._placeholders = new Map(); // chatId → placeholderId，流式占位消息
 
     // 注册进度回调：优先 edit 占位消息，无占位时新发消息
-    this.gateway.setProgressCallback(async (chatId, info) => {
+    this.gateway.registerProgressCallback('feishu', async (targetId, info) => {
+      if (typeof targetId !== 'string' || !targetId.startsWith(FEISHU_PROGRESS_PREFIX)) return;
+      const chatId = targetId.slice(FEISHU_PROGRESS_PREFIX.length);
       const now = Date.now();
       // 重试通知不受防刷屏限制（用户需即时感知）
       const isRetry = info?.type === 'retry';
@@ -289,6 +292,7 @@ class FeishuAdapter {
         senderName: chatType === 'group' ? senderId : undefined,
         userProfile: this.userProfile.get(chatId),
         userId: senderId,
+        progressTargetId: `${FEISHU_PROGRESS_PREFIX}${chatId}`,
       });
 
       // 清理占位映射
@@ -897,6 +901,7 @@ class FeishuAdapter {
         chatType: 'p2p',
         channelLabel: '飞书私聊',
         userProfile: this.userProfile.get(chatId),
+        progressTargetId: `${FEISHU_PROGRESS_PREFIX}${chatId}`,
       });
       await this._reply(messageId, result.text);
       await this._addReaction(messageId, 'DONE');
@@ -942,6 +947,7 @@ class FeishuAdapter {
         mediaFiles: [],
         chatType: 'p2p',
         channelLabel: '飞书私聊',
+        progressTargetId: `${FEISHU_PROGRESS_PREFIX}${chatId}`,
       });
       await this._sendMessage(chatId, result.text);
     } catch (err) {

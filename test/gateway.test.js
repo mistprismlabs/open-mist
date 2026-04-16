@@ -36,6 +36,141 @@ describe('Gateway._assessEffort', () => {
   });
 });
 
+describe('Gateway progress routing', () => {
+  it('routes progress events to the notifier that matches the progress target', async () => {
+    const feishuCalls = [];
+    const weixinCalls = [];
+    const gateway = new Gateway({
+      session: {
+        sessions: {},
+        get() { return null; },
+        set() {},
+        clear() {},
+      },
+      claude: {
+        async chat(_prompt, _sessionId, _mediaFiles, opts = {}) {
+          if (opts.onProgress) opts.onProgress('midway');
+          return { result: 'ok', sessionId: 'sess-router' };
+        },
+      },
+      memory: {
+        retrieveRelevantMemories: async () => ({ systemMessage: '', recentConversations: [] }),
+        startConversation() {},
+        recordMessage() {},
+        archiveMessage() {},
+        recordEntities() {},
+        shouldCompress() { return false; },
+      },
+    });
+
+    gateway.registerProgressCallback('feishu', (targetId, info) => {
+      if (!targetId.startsWith('feishu:')) return;
+      feishuCalls.push({ targetId, info });
+    });
+    gateway.registerProgressCallback('weixin', (targetId, info) => {
+      if (!targetId.startsWith('weixin:')) return;
+      weixinCalls.push({ targetId, info });
+    });
+
+    await gateway.processMessage({
+      chatId: 'weixin:user-1',
+      text: 'hi',
+      chatType: 'p2p',
+      channelLabel: '微信龙虾私聊',
+      userId: 'wx-user',
+      progressTargetId: 'weixin:user-1',
+    });
+
+    assert.deepEqual(feishuCalls, []);
+    assert.deepEqual(weixinCalls, [{ targetId: 'weixin:user-1', info: 'midway' }]);
+  });
+
+  it('does not forward progress when progressTargetId is missing', async () => {
+    const progressCalls = [];
+    const chatCalls = [];
+    const gateway = new Gateway({
+      session: {
+        sessions: {},
+        get() { return null; },
+        set() {},
+        clear() {},
+      },
+      claude: {
+        async chat(_prompt, _sessionId, _mediaFiles, opts = {}) {
+          if (opts.onProgress) opts.onProgress('midway');
+          chatCalls.push(Boolean(opts.onProgress));
+          return { result: 'ok', sessionId: 'sess-1' };
+        },
+      },
+      memory: {
+        retrieveRelevantMemories: async () => ({ systemMessage: '', recentConversations: [] }),
+        startConversation() {},
+        recordMessage() {},
+        archiveMessage() {},
+        recordEntities() {},
+        shouldCompress() { return false; },
+      },
+    });
+
+    gateway.setProgressCallback((targetId, info) => {
+      progressCalls.push({ targetId, info });
+    });
+
+    const result = await gateway.processMessage({
+      chatId: 'wechat-session',
+      text: 'hi',
+      chatType: 'p2p',
+      channelLabel: '微信龙虾私聊',
+      userId: 'wx-user',
+    });
+
+    assert.equal(result.text, 'ok');
+    assert.deepEqual(chatCalls, [false]);
+    assert.deepEqual(progressCalls, []);
+  });
+
+  it('forwards progress to explicit progress target', async () => {
+    const progressCalls = [];
+    const gateway = new Gateway({
+      session: {
+        sessions: {},
+        get() { return null; },
+        set() {},
+        clear() {},
+      },
+      claude: {
+        async chat(_prompt, _sessionId, _mediaFiles, opts = {}) {
+          if (opts.onProgress) opts.onProgress('midway');
+          return { result: 'ok', sessionId: 'sess-2' };
+        },
+      },
+      memory: {
+        retrieveRelevantMemories: async () => ({ systemMessage: '', recentConversations: [] }),
+        startConversation() {},
+        recordMessage() {},
+        archiveMessage() {},
+        recordEntities() {},
+        shouldCompress() { return false; },
+      },
+    });
+
+    gateway.setProgressCallback((targetId, info) => {
+      progressCalls.push({ targetId, info });
+    });
+
+    await gateway.processMessage({
+      chatId: 'feishu-chat',
+      text: 'hi',
+      chatType: 'p2p',
+      channelLabel: '飞书私聊',
+      userId: 'ou_xxx',
+      progressTargetId: 'feishu-chat',
+    });
+
+    assert.deepEqual(progressCalls, [{ targetId: 'feishu-chat', info: 'midway' }]);
+  });
+});
+
 describe('Gateway._extractEntities', () => {
   it('extracts camelCase identifiers', () => {
     const result = gw._extractEntities('修改 processMessage 函数');
@@ -71,7 +206,6 @@ describe('Gateway._extractEntities', () => {
 
   it('filters short identifiers', () => {
     const result = gw._extractEntities('a b ab abc');
-    // identifiers < 4 chars should be filtered
     assert.ok(!result.includes('a'));
     assert.ok(!result.includes('ab'));
   });

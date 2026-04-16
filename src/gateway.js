@@ -15,10 +15,11 @@ class Gateway {
     this.claude = claude;
     this.memory = memory || new MemoryManager();
     this.metrics = new MemoryMetrics();
-    this.onProgress = null;
+    this.progressCallbacks = new Map();
     this._retryState = new Map(); // chatId → {attempt, maxRetries, errorStatus, ts}
     this._sessionFailures = new Map(); // chatId:sessionId → {count, lastError, ts}
     this._sessionToChatId = new Map(); // sessionId → chatId（用于 TaskCreated 等 hook 反向路由）
+    this._sessionToProgressTarget = new Map(); // sessionId → progressTargetId（任务进度按通道路由）
     this._taskNotifyTs = new Map(); // chatId → lastNotifyTs（防刷屏：同一 chat 30s 内只发一条）
 
     // Hook: 会话结束时保存摘要
@@ -136,14 +137,15 @@ class Gateway {
     setTaskCreatedCallback(async (sessionId, _taskId, subject) => {
       if (!subject || subject.length < 3) return; // 过滤空任务
       const chatId = this._sessionToChatId.get(sessionId);
-      if (!chatId || !this.onProgress) return;
+      const progressTargetId = this._sessionToProgressTarget.get(sessionId);
+      if (!chatId || !progressTargetId || this.progressCallbacks.size === 0) return;
 
       // 30s 防刷屏：同一 chat 内连续任务只通知一次
       const now = Date.now();
       if (now - (this._taskNotifyTs.get(chatId) || 0) < 30 * 1000) return;
       this._taskNotifyTs.set(chatId, now);
 
-      this.onProgress(chatId, `📋 ${subject}`);
+      this._emitProgress(progressTargetId, `📋 ${subject}`);
     });
   }
 
@@ -151,9 +153,24 @@ class Gateway {
    * 核心处理管线：记忆检索 → Session → Claude → 记忆追踪
    * @returns {{ text, sessionId, isNewSession, pipelineMetrics }}
    */
-  setProgressCallback(fn) { this.onProgress = fn; }
+  registerProgressCallback(name, fn) {
+    if (!name) throw new Error('progress callback name is required');
+    if (typeof fn !== 'function') throw new Error('progress callback must be a function');
+    this.progressCallbacks.set(name, fn);
+    return () => this.progressCallbacks.delete(name);
+  }
 
-  async processMessage({ chatId, text, mediaFiles = [], chatType, channelLabel, senderName, userProfile, userId }) {
+  setProgressCallback(fn) {
+    return this.registerProgressCallback('default', fn);
+  }
+
+  _emitProgress(targetId, info) {
+    for (const callback of this.progressCallbacks.values()) {
+      callback(targetId, info);
+    }
+  }
+
+  async processMessage({ chatId, text, mediaFiles = [], chatType, channelLabel, senderName, userProfile, userId, progressTargetId }) {
     // 1. 记忆检索
     let memoryContext = '';
     let retrievalMs = 0, injectedCount = 0, retrievalMemories = [];
@@ -202,9 +219,14 @@ class Gateway {
     }
 
     // 5. Claude 调用（resume 失败自动重试）
-    const onProgress = this.onProgress ? (summary) => this.onProgress(chatId, summary) : undefined;
+    const onProgress = (this.progressCallbacks.size > 0 && progressTargetId)
+      ? (summary) => this._emitProgress(progressTargetId, summary)
+      : undefined;
     const onRetry = (info) => { this._retryState.set(chatId, { ...info, ts: Date.now() }); };
-    const onSessionInit = (sessionId) => { this._sessionToChatId.set(sessionId, chatId); };
+    const onSessionInit = (sessionId) => {
+      this._sessionToChatId.set(sessionId, chatId);
+      if (progressTargetId) this._sessionToProgressTarget.set(sessionId, progressTargetId);
+    };
     let response;
     try {
       response = await this.claude.chat(enrichedPrompt, existingSessionId, mediaFiles, { effort, onProgress, onRetry, onSessionInit });

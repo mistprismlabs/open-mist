@@ -15,6 +15,7 @@ const STALE_THRESHOLD_MS = 30 * 1000;
 const HANDLED_TTL_MS = 5 * 60 * 1000;
 const MAX_HANDLED = 1000;
 const WEIXIN_STATE_DIR = path.join(__dirname, '..', '..', 'data', 'weixin');
+const WEIXIN_PROGRESS_PREFIX = 'weixin:';
 
 const MESSAGE_TYPE_BOT = 2;
 const MESSAGE_STATE_FINISH = 2;
@@ -199,10 +200,41 @@ class WeixinAdapter {
       .filter(Boolean);
     this.handled = new Map();
     this.contextTokens = new Map();
+    this.progressNotifiedAt = new Map();
     this.pollState = loadWeixinPollState({ accountId: this.accountId, stateDir: this.stateDir });
     this.getUpdatesBuf = this.pollState?.getUpdatesBuf || '';
     this._closing = false;
     this._loopPromise = null;
+
+    this.gateway.registerProgressCallback('weixin', async (targetId, info) => {
+      if (typeof targetId !== 'string' || !targetId.startsWith(WEIXIN_PROGRESS_PREFIX)) return;
+
+      const userId = targetId.slice(WEIXIN_PROGRESS_PREFIX.length);
+      const now = Date.now();
+      const isRetry = info?.type === 'retry';
+      if (!isRetry && now - (this.progressNotifiedAt.get(userId) || 0) < 30 * 1000) return;
+
+      let text;
+      if (isRetry) {
+        text = `⏳ API 重试中（第 ${info.attempt}/${info.maxRetries} 次，状态 ${info.errorStatus}）`;
+      } else {
+        const rawText = typeof info === 'string' ? info : (info?.summary || info?.description || null);
+        if (!rawText || !rawText.startsWith('📋 ')) return;
+        this.progressNotifiedAt.set(userId, now);
+        text = `⚙️ ${rawText}`;
+      }
+      if (!text) return;
+
+      try {
+        await this._sendText({
+          to: userId,
+          text,
+          contextToken: this.contextTokens.get(userId),
+        });
+      } catch (err) {
+        console.warn('[Weixin] Progress notify failed:', err.message);
+      }
+    });
   }
 
   get platform() {
@@ -321,6 +353,7 @@ class WeixinAdapter {
         channelLabel,
         senderName: isGroup ? message.from_user_id : undefined,
         userId: message.from_user_id,
+        progressTargetId: `${WEIXIN_PROGRESS_PREFIX}${message.from_user_id}`,
       });
 
       await this._sendText({
