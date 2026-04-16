@@ -32,6 +32,7 @@ read_env_value() {
   fi
 
   line="${line#*=}"
+  line="$(printf '%s' "$line" | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
   line="${line%\"}"
   line="${line#\"}"
   line="${line%\'}"
@@ -215,6 +216,13 @@ if [[ -n "$PROJECT_DIR_VALUE" ]]; then
   pass "PROJECT_DIR configured"
 else
   warn "PROJECT_DIR missing; helpful for heartbeat and ops scripts"
+fi
+
+WEB_PORT_VALUE="$(read_env_value WEB_PORT "$ENV_FILE")"
+if [[ -n "$WEB_PORT_VALUE" ]]; then
+  pass "WEB_PORT configured"
+else
+  warn "WEB_PORT missing; set an instance-specific web port before starting systemd on shared hosts"
 fi
 
 HEARTBEAT_TIMEZONE_VALUE="$(read_env_value HEARTBEAT_TIMEZONE "$ENV_FILE")"

@@ -142,3 +142,55 @@ test('check-config rejects partially configured WeCom channels', () => {
   assert.match(result.stdout, /WECOM_TOKEN/i);
   assert.match(result.stdout, /WECOM_ENCODING_AES_KEY/i);
 });
+
+test('check-config treats inline-comment empty auth values as missing', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openmist-auth-config-'));
+  const scriptsDir = path.join(tempRoot, 'scripts');
+  fs.mkdirSync(scriptsDir, { recursive: true });
+
+  fs.copyFileSync(
+    path.join(__dirname, '..', 'scripts', 'check-config.sh'),
+    path.join(scriptsDir, 'check-config.sh'),
+  );
+
+  fs.writeFileSync(path.join(tempRoot, '.env.example'), [
+    'ANTHROPIC_AUTH_TOKEN=                 # Claude Code / Anthropic-compatible providers can also use this token env',
+    'ANTHROPIC_BASE_URL=                   # Optional, e.g. https://api.minimaxi.com/anthropic',
+    'CLAUDE_MODEL=',
+    'RECOMMEND_MODEL=',
+  ].join('\n'));
+  fs.writeFileSync(path.join(tempRoot, '.env'), fs.readFileSync(path.join(tempRoot, '.env.example')));
+
+  const result = spawnSync('bash', [path.join(scriptsDir, 'check-config.sh')], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /Anthropic-compatible API credential.*required/i);
+});
+
+test('check-config warns when WEB_PORT is missing for instance config', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openmist-web-port-config-'));
+  const scriptsDir = path.join(tempRoot, 'scripts');
+  fs.mkdirSync(scriptsDir, { recursive: true });
+
+  fs.copyFileSync(
+    path.join(__dirname, '..', 'scripts', 'check-config.sh'),
+    path.join(scriptsDir, 'check-config.sh'),
+  );
+
+  fs.writeFileSync(path.join(tempRoot, '.env.example'), 'WEB_PORT=3003\n');
+  fs.writeFileSync(path.join(tempRoot, '.env'), [
+    'ANTHROPIC_API_KEY=sk-test',
+    'SERVICE_NAME=openmist-clawtest.service',
+    'APP_USER=clawtest',
+    'PROJECT_DIR=/home/clawtest/open-mist',
+  ].join('\n'));
+
+  const result = spawnSync('bash', [path.join(scriptsDir, 'check-config.sh')], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /WEB_PORT missing/i);
+});

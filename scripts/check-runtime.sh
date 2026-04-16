@@ -4,6 +4,7 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATUS=0
+USER_LOCAL_BIN="${HOME:-}/.local/bin"
 
 pass() {
   printf '[PASS] %s\n' "$1"
@@ -34,6 +35,10 @@ check_cmd() {
 
 echo "OpenMist runtime check"
 echo "Repo: $ROOT_DIR"
+
+if [[ -n "${HOME:-}" && -d "$USER_LOCAL_BIN" ]]; then
+  PATH="$USER_LOCAL_BIN:$PATH"
+fi
 
 if [[ -f /etc/os-release ]]; then
   if grep -qi '^ID=ubuntu' /etc/os-release || grep -qi '^ID_LIKE=.*ubuntu' /etc/os-release; then
@@ -86,7 +91,7 @@ fi
 if [[ -f "$ROOT_DIR/package.json" ]]; then
   pass "package.json found"
 else
-  fail "package.json not found"
+  warn "package.json missing; clone the repo before running repo-local checks"
 fi
 
 if [[ -d "$ROOT_DIR/node_modules" ]]; then

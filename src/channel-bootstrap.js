@@ -1,7 +1,22 @@
 'use strict';
 
+function isPlaceholderValue(value) {
+  if (typeof value !== 'string') return true;
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === '') return true;
+  if (normalized.includes('your_')) return true;
+  if (normalized.includes('your-')) return true;
+  if (normalized.includes('your key')) return true;
+  if (normalized.includes('example')) return true;
+  if (normalized.includes('/path/to/')) return true;
+  if (normalized === 'your-domain.com') return true;
+
+  return false;
+}
+
 function hasValue(value) {
-  return typeof value === 'string' && value.trim() !== '';
+  return !isPlaceholderValue(value);
 }
 
 function findMissing(env, keys) {

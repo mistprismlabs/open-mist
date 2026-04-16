@@ -3,10 +3,10 @@
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$ROOT_DIR/.env"
 STATUS=0
 
 SERVICE_NAME="${SERVICE_NAME:-openmist.service}"
-WEB_PORT="${WEB_PORT:-3003}"
 JOURNAL_LINES="${CHECK_SERVICE_JOURNAL_LINES:-80}"
 
 pass() {
@@ -21,6 +21,33 @@ fail() {
   printf '[FAIL] %s\n' "$1"
   STATUS=1
 }
+
+read_env_value() {
+  local key="$1"
+  local file="$2"
+  local line
+
+  line="$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n 1 || true)"
+  if [[ -z "$line" ]]; then
+    printf ''
+    return 0
+  fi
+
+  line="${line#*=}"
+  line="$(printf '%s' "$line" | sed -E 's/[[:space:]]+#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+  line="${line%\"}"
+  line="${line#\"}"
+  line="${line%\'}"
+  line="${line#\'}"
+  printf '%s' "$line"
+}
+
+if [[ -n "${WEB_PORT:-}" ]]; then
+  WEB_PORT="$WEB_PORT"
+elif [[ -f "$ENV_FILE" ]]; then
+  WEB_PORT="$(read_env_value WEB_PORT "$ENV_FILE")"
+fi
+WEB_PORT="${WEB_PORT:-3003}"
 
 read_journal() {
   local active_since="$1"

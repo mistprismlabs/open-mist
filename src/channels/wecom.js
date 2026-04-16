@@ -18,7 +18,7 @@ const MAX_RECONNECT_DELAY = 60 * 1000;
 const MAX_MISSED_PONGS = 3;
 
 class WeComAdapter {
-  constructor({ gateway, port = 3001 }) {
+  constructor({ gateway, port = parseInt(process.env.WECOM_PORT || '3001', 10) }) {
     this.gateway = gateway;
     this.port = port;
     this.server = null;

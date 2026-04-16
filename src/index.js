@@ -9,6 +9,13 @@ const { Deployer } = require('./deployer');
 const { WeixinAdapter } = require('./channels/weixin');
 const { resolveChannelBootstrapPlan } = require('./channel-bootstrap');
 
+const activeAdapters = [];
+
+function retainAdapter(adapter) {
+  activeAdapters.push(adapter);
+  return adapter;
+}
+
 async function main() {
   const BOT_NAME = process.env.BOT_NAME || 'OpenMist';
   console.log(`[${BOT_NAME}] Starting gateway...`);
@@ -19,12 +26,12 @@ async function main() {
     claude: new ClaudeClient(),
   });
 
-  const feishu = new FeishuAdapter({
+  const feishu = retainAdapter(new FeishuAdapter({
     gateway,
     bitable: new BitableLogger(),
     taskExecutor: new TaskExecutor(),
     deployer: new Deployer(),
-  });
+  }));
 
   if (channelPlan.feishu.enabled) {
     await feishu.start();
@@ -34,19 +41,19 @@ async function main() {
 
   // Web channel（需求许愿池）
   const { WebAdapter } = require("./channels/web");
-  const web = new WebAdapter();
+  const web = retainAdapter(new WebAdapter());
   await web.start();
 
   if (channelPlan.wecom.enabled) {
     const { WeComAdapter } = require('./channels/wecom');
-    const wecom = new WeComAdapter({ gateway });
+    const wecom = retainAdapter(new WeComAdapter({ gateway }));
     await wecom.start();
   } else {
     console.log(`[${BOT_NAME}] WeCom channel skipped (missing credentials)`);
   }
 
   if (String(process.env.WEIXIN_ENABLED).toLowerCase() === 'true') {
-    const weixin = new WeixinAdapter({ gateway });
+    const weixin = retainAdapter(new WeixinAdapter({ gateway }));
     await weixin.start();
   }
 

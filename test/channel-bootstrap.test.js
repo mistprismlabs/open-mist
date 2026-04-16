@@ -42,6 +42,18 @@ test('Feishu channel is enabled when both credentials are present', () => {
   });
 });
 
+test('Feishu channel stays disabled when only placeholder credentials are present', () => {
+  const plan = resolveChannelBootstrapPlan({
+    FEISHU_APP_ID: 'cli_your_app_id',
+    FEISHU_APP_SECRET: 'your_app_secret',
+  });
+
+  assert.deepEqual(plan.feishu, {
+    enabled: false,
+    reason: 'missing_credentials',
+  });
+});
+
 test('WeCom channel is skipped when both app and bot credentials are absent', () => {
   const plan = resolveChannelBootstrapPlan({});
 
@@ -106,5 +118,21 @@ test('WeCom channel is enabled when either app or bot credentials are complete',
     enabled: true,
     reason: 'configured',
     activeSources: ['bot'],
+  });
+});
+
+test('WeCom channel stays disabled when only placeholder credentials are present', () => {
+  const plan = resolveChannelBootstrapPlan({
+    WECOM_CORP_ID: 'your_corp_id',
+    WECOM_AGENT_ID: 'your_agent_id',
+    WECOM_AGENT_SECRET: 'your_secret',
+    WECOM_TOKEN: 'your_token',
+    WECOM_ENCODING_AES_KEY: 'your_aes_key',
+  });
+
+  assert.deepEqual(plan.wecom, {
+    enabled: false,
+    reason: 'missing_credentials',
+    activeSources: [],
   });
 });

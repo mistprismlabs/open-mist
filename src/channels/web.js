@@ -403,6 +403,7 @@ class WebAdapter {
     this.sessions = new Map();    // token -> { username, createdAt }
     this.conversations = new Map(); // username -> Array<{role, content}>
     this.app = express();
+    this.server = null;
     this._setup();
   }
 
@@ -676,12 +677,21 @@ class WebAdapter {
 
   async start() {
     const port = parseInt(process.env.WEB_PORT || '3003', 10);
-    this.app.listen(port, '127.0.0.1', () => {
-      console.log(`[WebAdapter] Listening on 127.0.0.1:${port}`);
+    await new Promise((resolve, reject) => {
+      this.server = this.app.listen(port, '127.0.0.1', () => {
+        const actualPort = this.server?.address()?.port ?? port;
+        console.log(`[WebAdapter] Listening on 127.0.0.1:${actualPort}`);
+        resolve();
+      });
+      this.server.once('error', reject);
     });
   }
 
-  async stop() {}
+  async stop() {
+    if (!this.server) return;
+
+    await new Promise((resolve) => this.server.close(resolve));
+  }
 }
 
 module.exports = { WebAdapter };

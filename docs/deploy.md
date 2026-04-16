@@ -129,6 +129,7 @@ OpenMist 的公开部署入口默认假设如下：
 
 - `cp .env.example .env`
 - 如需写入配置，优先使用 `node scripts/bootstrap-config.js`
+- 如果同机还有别的 OpenMist 实例，显式写入当前实例自己的 `WEB_PORT`
 - 运行 `scripts/check-config.sh`
 
 ### Phase 6: Service Bootstrap
@@ -269,6 +270,7 @@ cp .env.example .env
 - 能从系统推断的，不要求用户填写
 - Claude / Agent SDK 已有合理默认行为的，不重复造默认值
 - 涉及实例密钥和私有标识的，放进 `.env`
+- 同机多实例时，实例级监听端口必须显式写入，不要复用默认值
 
 部署时至少检查：
 
@@ -292,6 +294,14 @@ ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
 CLAUDE_MODEL=MiniMax-M2.7
 RECOMMEND_MODEL=MiniMax-M2.7-highspeed
 ```
+
+如果同一台机器上要跑多个 OpenMist 实例，再额外为当前实例写一个未占用的 web 端口：
+
+```bash
+WEB_PORT=3003
+```
+
+例如第二个实例可以改成 `3303`、`3304` 等未占用端口。
 
 配置完成后执行：
 
@@ -337,6 +347,7 @@ node scripts/bootstrap-config.js import-lark --env-file .env
 - `.env` 是否已创建
 - 必填配置是否完整
 - 飞书、企业微信等可选通道是否出现“填了一半”的配置错误
+- `WEB_PORT` 是否已为当前实例显式写入
 
 ```bash
 ./scripts/check-service.sh
@@ -350,6 +361,12 @@ node scripts/bootstrap-config.js import-lark --env-file .env
 - VectorStore 是否正常初始化或已经降级
 - 启动日志里是否出现 fatal error
 - Feishu 是否被平台侧前提阻塞（例如事件订阅 / 长连接未就绪）
+
+`scripts/check-service.sh` 会优先读取 `.env` 中的 `WEB_PORT`；如果你想临时覆盖，也可以显式传入：
+
+```bash
+WEB_PORT=3304 ./scripts/check-service.sh
+```
 
 如果你已经填了 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`，但日志里出现下面这类信息：
 
@@ -366,6 +383,7 @@ node scripts/bootstrap-config.js import-lark --env-file .env
 ## 10. 用 systemd 启动
 
 建议使用 `.env` 中的 `SERVICE_NAME`，不要写死私有服务名。
+如果同机已经存在其他 OpenMist 实例，先确认当前 `.env` 里的 `WEB_PORT` 没有冲突，再启动 service。
 
 最小服务文件示例：
 

@@ -16,13 +16,17 @@ function makeFakeCommand(binDir, name, body) {
   fs.chmodSync(filePath, 0o755);
 }
 
-function runServiceCheck({ serviceState = 'active', activeSince = 'Thu 2026-04-16 09:27:34 CST', journal = '', curlCode = '404', extraEnv = {} } = {}) {
+function runServiceCheck({ serviceState = 'active', activeSince = 'Thu 2026-04-16 09:27:34 CST', journal = '', curlCode = '404', envFile = '', extraEnv = {} } = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openmist-service-'));
   const scriptsDir = path.join(tempRoot, 'scripts');
   const binDir = path.join(tempRoot, 'bin');
+  const curlArgsFile = path.join(tempRoot, 'curl-args.txt');
   fs.mkdirSync(scriptsDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
   fs.copyFileSync(scriptPath, path.join(scriptsDir, 'check-service.sh'));
+  if (envFile) {
+    fs.writeFileSync(path.join(tempRoot, '.env'), envFile);
+  }
 
   makeFakeCommand(binDir, 'systemctl', `
 if [[ "$1" == "is-active" ]]; then
@@ -40,30 +44,51 @@ printf 'ignored\\n'
 printf '%s' "\${JOURNAL_OUTPUT:-}"
 `);
 
+  makeFakeCommand(binDir, 'sudo', `
+while [[ "$#" -gt 0 && "$1" == -* ]]; do
+  shift
+done
+
+if [[ "$#" -eq 0 ]]; then
+  exit 0
+fi
+
+if [[ "$1" == "true" ]]; then
+  exit 0
+fi
+
+exec "$@"
+`);
+
   makeFakeCommand(binDir, 'curl', `
+printf '%s\n' "$*" > "\${CURL_ARGS_FILE}"
 printf '%s' "\${CURL_CODE:-000}"
 `);
 
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH}`,
+    SERVICE_STATE: serviceState,
+    SERVICE_ACTIVE_SINCE: activeSince,
+    JOURNAL_OUTPUT: journal,
+    CURL_CODE: curlCode,
+    CURL_ARGS_FILE: curlArgsFile,
+    SERVICE_NAME: 'openmist-test.service',
+    WEB_PORT: '3003',
+    ...extraEnv,
+  };
+
   const result = spawnSync('bash', [path.join(scriptsDir, 'check-service.sh')], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${binDir}:${process.env.PATH}`,
-      SERVICE_STATE: serviceState,
-      SERVICE_ACTIVE_SINCE: activeSince,
-      JOURNAL_OUTPUT: journal,
-      CURL_CODE: curlCode,
-      SERVICE_NAME: 'openmist-test.service',
-      WEB_PORT: '3003',
-      ...extraEnv,
-    },
+    env,
   });
 
-  return result;
+  const curlArgs = fs.existsSync(curlArgsFile) ? fs.readFileSync(curlArgsFile, 'utf8').trim() : '';
+  return { result, curlArgs };
 }
 
 test('check-service passes for active service with healthy startup logs', () => {
-  const result = runServiceCheck({
+  const { result } = runServiceCheck({
     journal: [
       '[VectorStore] Initialized (sqlite-vec ready)',
       '[OpenMist] Gateway running ✓',
@@ -79,7 +104,7 @@ test('check-service passes for active service with healthy startup logs', () => 
 });
 
 test('check-service warns when vector store falls back but service still runs', () => {
-  const result = runServiceCheck({
+  const { result } = runServiceCheck({
     journal: [
       '[VectorStore] Init failed (falling back to keyword search): module mismatch',
       '[OpenMist] Gateway running ✓',
@@ -92,7 +117,7 @@ test('check-service warns when vector store falls back but service still runs', 
 });
 
 test('check-service fails when systemd service is not active', () => {
-  const result = runServiceCheck({
+  const { result } = runServiceCheck({
     serviceState: 'inactive',
     journal: '',
   });
@@ -102,7 +127,7 @@ test('check-service fails when systemd service is not active', () => {
 });
 
 test('check-service fails when fatal startup error is present', () => {
-  const result = runServiceCheck({
+  const { result } = runServiceCheck({
     journal: [
       '[OpenMist] Fatal error: bad config',
       '[WebAdapter] Listening on 127.0.0.1:3003',
@@ -114,7 +139,7 @@ test('check-service fails when fatal startup error is present', () => {
 });
 
 test('check-service warns when Feishu startup is blocked by platform prerequisites', () => {
-  const result = runServiceCheck({
+  const { result } = runServiceCheck({
     journal: [
       '[Feishu] Startup blocked by platform prerequisites: verify event subscription, long connection, and platform status. Original error: code: 1000040345 system busy',
       '[OpenMist] Gateway running ✓',
@@ -125,4 +150,22 @@ test('check-service warns when Feishu startup is blocked by platform prerequisit
 
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /feishu startup blocked by platform prerequisites/i);
+});
+
+test('check-service reads WEB_PORT from .env when no override is provided', () => {
+  const { result, curlArgs } = runServiceCheck({
+    journal: [
+      '[VectorStore] Initialized (sqlite-vec ready)',
+      '[OpenMist] Gateway running ✓',
+      '[WebAdapter] Listening on 127.0.0.1:3304',
+    ].join('\n'),
+    envFile: 'WEB_PORT=3304\n',
+    extraEnv: {
+      WEB_PORT: '',
+    },
+  });
+
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /127\.0\.0\.1:3304/);
+  assert.match(curlArgs, /http:\/\/127\.0\.0\.1:3304\//);
 });

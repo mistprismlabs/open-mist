@@ -69,6 +69,7 @@ test('bootstrap shell scripts are syntactically valid and perform expected check
   assert.match(configScript, /ANTHROPIC_API_KEY/);
   assert.match(configScript, /ANTHROPIC_AUTH_TOKEN/);
   assert.match(configScript, /ANTHROPIC_BASE_URL/);
+  assert.match(configScript, /WEB_PORT/);
   assert.match(configScript, /is_placeholder_value|your_key|your_app_secret/i);
 
   const bootstrapConfigScript = read(bootstrapConfigPath);
@@ -89,6 +90,8 @@ test('bootstrap shell scripts are syntactically valid and perform expected check
 
   const bootstrapServiceScript = read(bootstrapServicePath);
   assert.match(bootstrapServiceScript, /EnvironmentFile=/);
+  assert.match(bootstrapServiceScript, /sudo .*tee|sudo .*install|sudo .*mkdir/);
+  assert.match(bootstrapServiceScript, /NODE_BIN|src\/index\.js/);
   assert.match(bootstrapServiceScript, /systemctl daemon-reload/);
   assert.match(bootstrapServiceScript, /BOOTSTRAP_SKIP_SYSTEMCTL/);
 
@@ -97,6 +100,13 @@ test('bootstrap shell scripts are syntactically valid and perform expected check
   assert.match(serviceScript, /journalctl/);
   assert.match(serviceScript, /Gateway running/);
   assert.match(serviceScript, /WebAdapter|Listening on 127\.0\.0\.1/);
+});
+
+test('public bootstrap and check shell scripts are executable', () => {
+  for (const filePath of [checkRuntimePath, checkConfigPath, checkServicePath, bootstrapUserPath, bootstrapRuntimePath, bootstrapServicePath]) {
+    const mode = fs.statSync(filePath).mode;
+    assert.ok((mode & 0o111) !== 0, `${path.basename(filePath)} should be executable`);
+  }
 });
 
 test('bootstrap skill points agents to the repo docs and check scripts', () => {
@@ -162,4 +172,14 @@ test('.env example and deploy doc use the runtime WeCom variable names', () => {
   assert.doesNotMatch(envExample, /WECOM_APP_AGENT_ID|WECOM_APP_SECRET|WECOM_APP_TOKEN|WECOM_APP_ENCODING_AES_KEY|WECOM_BOT_KEY/);
   assert.match(deployDoc, /WECOM_AGENT_ID/);
   assert.match(deployDoc, /WECOM_BOT_ID/);
+});
+
+test('.env example and deploy doc mention the instance-specific web port', () => {
+  const deployDoc = read(deployDocPath);
+  const envExample = read(path.join(root, '.env.example'));
+
+  assert.match(envExample, /WEB_PORT=/);
+  assert.match(deployDoc, /WEB_PORT/);
+  assert.match(deployDoc, /3003/);
+  assert.match(deployDoc, /同机多实例|multiple instances|实例级/i);
 });
