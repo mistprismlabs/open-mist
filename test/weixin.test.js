@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
+  WeixinAdapter,
   buildWeixinClientVersion,
   buildWeixinSessionKey,
   extractWeixinText,
@@ -88,5 +89,67 @@ describe('weixin adapter helpers', () => {
 
     const statePath = resolveWeixinPollStatePath({ accountId: 'wx/account:1', stateDir: tmp });
     assert.equal(path.basename(statePath), 'wx_account_1.json');
+  });
+
+  it('passes a namespaced progress target when handling inbound messages', async () => {
+    const calls = [];
+    const adapter = new WeixinAdapter({
+      gateway: {
+        registerProgressCallback() {},
+        async processMessage(payload) {
+          calls.push(payload);
+          return { text: 'pong', sessionId: 'sess-1' };
+        },
+      },
+    });
+
+    adapter._sendText = async () => ({ messageId: 'msg-1' });
+
+    await adapter._handleMessage({
+      from_user_id: 'wx-user-1',
+      create_time_ms: Date.now(),
+      item_list: [{ type: 1, text_item: { text: 'hi' } }],
+      context_token: 'ctx-1',
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].chatId, 'weixin:wx-user-1');
+    assert.equal(calls[0].progressTargetId, 'weixin:wx-user-1');
+  });
+
+  it('ignores plain assistant progress text but keeps retry and task notifications', async () => {
+    let progressCallback = null;
+    const sent = [];
+    const adapter = new WeixinAdapter({
+      gateway: {
+        registerProgressCallback(_name, fn) {
+          progressCallback = fn;
+        },
+        async processMessage() {
+          return { text: 'pong', sessionId: 'sess-1' };
+        },
+      },
+    });
+
+    adapter._sendText = async (payload) => {
+      sent.push(payload);
+      return { messageId: `msg-${sent.length}` };
+    };
+
+    adapter.contextTokens.set('wx-user-1', 'ctx-1');
+
+    await progressCallback('weixin:wx-user-1', '这是生成中的中间文本');
+    await progressCallback('weixin:wx-user-1', '📋 已创建任务');
+    await progressCallback('weixin:wx-user-1', {
+      type: 'retry',
+      attempt: 2,
+      maxRetries: 10,
+      errorStatus: 502,
+    });
+
+    assert.deepEqual(sent.map(item => item.text), [
+      '⚙️ 📋 已创建任务',
+      '⏳ API 重试中（第 2/10 次，状态 502）',
+    ]);
   });
 });

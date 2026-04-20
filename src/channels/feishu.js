@@ -16,6 +16,7 @@ const { classifyFeishuStartupError } = require("./feishu-startup");
 
 const STALE_THRESHOLD_MS = 30 * 1000;
 const SUPPORTED_MSG_TYPES = ["text", "image", "post", "file"];
+const FEISHU_PROGRESS_PREFIX = 'feishu:';
 
 class FeishuAdapter {
   constructor({ gateway, bitable, taskExecutor, deployer }) {
@@ -33,28 +34,38 @@ class FeishuAdapter {
     this._placeholders = new Map(); // chatId → placeholderId，流式占位消息
 
     // 注册进度回调：优先 edit 占位消息，无占位时新发消息
-    this.gateway.setProgressCallback(async (chatId, info) => {
+    this.gateway.registerProgressCallback('feishu', async (targetId, info) => {
+      if (typeof targetId !== 'string' || !targetId.startsWith(FEISHU_PROGRESS_PREFIX)) return false;
+      const chatId = targetId.slice(FEISHU_PROGRESS_PREFIX.length);
       const now = Date.now();
       // 重试通知不受防刷屏限制（用户需即时感知）
       const isRetry = info?.type === 'retry';
-      if (!isRetry && now - (this._lastProgress.get(chatId) || 0) < 30000) return;
-      if (!isRetry) this._lastProgress.set(chatId, now);
+      const isAlert = info?.type === 'alert';
+      if (!isRetry && !isAlert && now - (this._lastProgress.get(chatId) || 0) < 30000) return;
+      if (!isRetry && !isAlert) this._lastProgress.set(chatId, now);
 
       let text;
       if (isRetry) {
         text = `⏳ API 重试中（第 ${info.attempt}/${info.maxRetries} 次，状态 ${info.errorStatus}）`;
+      } else if (isAlert) {
+        text = info.text || info.summary || info.description || null;
       } else {
         text = typeof info === 'string' ? info : (info?.summary || info?.description || null);
       }
-      if (!text) return;
+      if (!text) return false;
       const placeholderId = this._placeholders.get(chatId);
       if (placeholderId) {
-        await this.messageAPI.editMessage(placeholderId, `⏳ ${text}`).catch(() => {});
+        const placeholderText = isAlert ? text : `⏳ ${text}`;
+        const edited = await this.messageAPI.editMessage(placeholderId, placeholderText).catch(() => false);
+        return Boolean(edited);
       } else {
         try {
-          await this._sendMessage(chatId, `⚙️ ${text}`);
+          const outboundText = isAlert ? text : `⚙️ ${text}`;
+          await this._sendMessage(chatId, outboundText);
+          return true;
         } catch (e) {
           console.warn('[Feishu] progress notify failed:', e.message);
+          return false;
         }
       }
     });
@@ -289,6 +300,7 @@ class FeishuAdapter {
         senderName: chatType === 'group' ? senderId : undefined,
         userProfile: this.userProfile.get(chatId),
         userId: senderId,
+        progressTargetId: `${FEISHU_PROGRESS_PREFIX}${chatId}`,
       });
 
       // 清理占位映射
@@ -897,6 +909,7 @@ class FeishuAdapter {
         chatType: 'p2p',
         channelLabel: '飞书私聊',
         userProfile: this.userProfile.get(chatId),
+        progressTargetId: `${FEISHU_PROGRESS_PREFIX}${chatId}`,
       });
       await this._reply(messageId, result.text);
       await this._addReaction(messageId, 'DONE');
@@ -942,6 +955,7 @@ class FeishuAdapter {
         mediaFiles: [],
         chatType: 'p2p',
         channelLabel: '飞书私聊',
+        progressTargetId: `${FEISHU_PROGRESS_PREFIX}${chatId}`,
       });
       await this._sendMessage(chatId, result.text);
     } catch (err) {
