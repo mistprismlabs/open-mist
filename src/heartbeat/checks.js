@@ -132,14 +132,18 @@ function checkSslCertPaths({ nginxEnabledDir, sslCertPath }) {
 
   try {
     for (const file of fs.readdirSync(nginxEnabledDir)) {
-      const content = fs.readFileSync(path.join(nginxEnabledDir, file), 'utf8');
-      const certLines = content.split('\n').filter(line => line.trim().startsWith('ssl_certificate'));
+      const filePath = path.join(nginxEnabledDir, file);
+      try {
+        if (!fs.statSync(filePath).isFile()) continue;
+        const content = fs.readFileSync(filePath, 'utf8');
+        const certLines = content.split('\n').filter(line => line.trim().startsWith('ssl_certificate'));
 
-      for (const line of certLines) {
-        if (!line.includes(standardDir)) {
-          alerts.push(`[SSL告警] ${file}: 非标准证书路径 → ${line.trim()}`);
+        for (const line of certLines) {
+          if (!line.includes(standardDir)) {
+            alerts.push(`[SSL告警] ${file}: 非标准证书路径 → ${line.trim()}`);
+          }
         }
-      }
+      } catch {}
     }
   } catch {
     return alerts;
