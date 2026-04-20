@@ -36,7 +36,7 @@ class FeishuAdapter {
 
     // 注册进度回调：优先 edit 占位消息，无占位时新发消息
     this.gateway.registerProgressCallback('feishu', async (targetId, info) => {
-      if (typeof targetId !== 'string' || !targetId.startsWith(FEISHU_PROGRESS_PREFIX)) return;
+      if (typeof targetId !== 'string' || !targetId.startsWith(FEISHU_PROGRESS_PREFIX)) return false;
       const chatId = targetId.slice(FEISHU_PROGRESS_PREFIX.length);
       const now = Date.now();
       // 重试通知不受防刷屏限制（用户需即时感知）
@@ -53,17 +53,20 @@ class FeishuAdapter {
       } else {
         text = typeof info === 'string' ? info : (info?.summary || info?.description || null);
       }
-      if (!text) return;
+      if (!text) return false;
       const placeholderId = this._placeholders.get(chatId);
       if (placeholderId) {
         const placeholderText = isAlert ? text : `⏳ ${text}`;
-        await this.messageAPI.editMessage(placeholderId, placeholderText).catch(() => {});
+        const edited = await this.messageAPI.editMessage(placeholderId, placeholderText).catch(() => false);
+        return Boolean(edited);
       } else {
         try {
           const outboundText = isAlert ? text : `⚙️ ${text}`;
           await this._sendMessage(chatId, outboundText);
+          return true;
         } catch (e) {
           console.warn('[Feishu] progress notify failed:', e.message);
+          return false;
         }
       }
     });

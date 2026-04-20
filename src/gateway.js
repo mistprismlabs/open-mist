@@ -144,7 +144,7 @@ class Gateway {
         : { type: 'alert', text: '⚠️ 本次处理遇到运行异常，请稍后重试。' };
 
       if (progressTargetId) {
-        this._notifyOperationalIssue({
+        await this._notifyOperationalIssue({
           progressTargetId,
           userInfo,
           notifyMessage: msg,
@@ -156,7 +156,7 @@ class Gateway {
 
       if (now - _lastStopFailureNotify < 5 * 60 * 1000) return;
       _lastStopFailureNotify = now;
-      this._notifyOperationalIssue({
+      await this._notifyOperationalIssue({
         progressTargetId,
         userInfo,
         notifyMessage: msg,
@@ -183,7 +183,7 @@ class Gateway {
       };
 
       if (progressTargetId) {
-        this._notifyOperationalIssue({
+        await this._notifyOperationalIssue({
           progressTargetId,
           userInfo,
           notifyMessage: msg,
@@ -196,7 +196,7 @@ class Gateway {
       const now = Date.now();
       if (now - _lastToolFailureNotify < 2 * 60 * 1000) return;
       _lastToolFailureNotify = now;
-      this._notifyOperationalIssue({
+      await this._notifyOperationalIssue({
         progressTargetId,
         userInfo,
         notifyMessage: msg,
@@ -217,7 +217,7 @@ class Gateway {
       if (now - (this._taskNotifyTs.get(chatId) || 0) < 30 * 1000) return;
       this._taskNotifyTs.set(chatId, now);
 
-      this._emitProgress(progressTargetId, `📋 ${subject}`);
+      await this._emitProgress(progressTargetId, `📋 ${subject}`);
     });
   }
 
@@ -286,7 +286,7 @@ class Gateway {
 
     // 5. Claude 调用（resume 失败自动重试）
     const onProgress = (this.progressCallbacks.size > 0 && progressTargetId)
-      ? (summary) => this._emitProgress(progressTargetId, summary)
+      ? async (summary) => this._emitProgress(progressTargetId, summary)
       : undefined;
     const onRetry = (info) => { this._retryState.set(chatId, { ...info, ts: Date.now() }); };
     const onSessionInit = (sessionId) => {
@@ -468,20 +468,23 @@ class Gateway {
     }
   }
 
-  _emitProgress(targetId, info) {
+  async _emitProgress(targetId, info) {
+    let handled = false;
     for (const callback of this.progressCallbacks.values()) {
       try {
-        callback(targetId, info);
+        const result = await callback(targetId, info);
+        if (result !== false) handled = true;
       } catch (err) {
         console.warn('[Gateway] Progress callback failed:', err.message);
       }
     }
+    return handled;
   }
 
-  _notifyOperationalIssue({ progressTargetId, userInfo, notifyMessage, spawnFn, notifyScriptPath }) {
+  async _notifyOperationalIssue({ progressTargetId, userInfo, notifyMessage, spawnFn, notifyScriptPath }) {
     if (progressTargetId && this.progressCallbacks.size > 0 && userInfo) {
-      this._emitProgress(progressTargetId, userInfo);
-      return 'progress';
+      const delivered = await this._emitProgress(progressTargetId, userInfo);
+      if (delivered) return 'progress';
     }
 
     if (typeof spawnFn === 'function' && notifyMessage && notifyScriptPath) {
