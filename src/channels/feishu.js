@@ -716,25 +716,37 @@ class FeishuAdapter {
 
   async _sendMessage(chatId, text) {
     try {
-      const chunks = this._splitMessage(text, 3500);
-      for (const chunk of chunks) {
-        let formatted = this.formatter.format(chunk);
-
-        if (formatted.pendingImages && formatted.pendingImages.length > 0) {
-          formatted = await this._resolvePendingImages(formatted);
-        }
-
-        await this.client.im.message.create({
-          data: {
-            receive_id: chatId,
-            content: formatted.content,
-            msg_type: formatted.msg_type,
-          },
-          params: { receive_id_type: "chat_id" },
-        });
-      }
+      await this._sendMessageInternal(chatId, text);
     } catch (err) {
       console.error("[Feishu] Failed to send message:", err.message);
+    }
+  }
+
+  async sendReminder({ chatId, text }) {
+    return this._sendMessageStrict(chatId, text);
+  }
+
+  async _sendMessageStrict(chatId, text) {
+    return this._sendMessageInternal(chatId, text);
+  }
+
+  async _sendMessageInternal(chatId, text) {
+    const chunks = this._splitMessage(text, 3500);
+    for (const chunk of chunks) {
+      let formatted = this.formatter.format(chunk);
+
+      if (formatted.pendingImages && formatted.pendingImages.length > 0) {
+        formatted = await this._resolvePendingImages(formatted);
+      }
+
+      await this.client.im.message.create({
+        data: {
+          receive_id: chatId,
+          content: formatted.content,
+          msg_type: formatted.msg_type,
+        },
+        params: { receive_id_type: "chat_id" },
+      });
     }
   }
 

@@ -291,6 +291,93 @@ class JobsStore {
     return hydrateNotification(row);
   }
 
+  listNotificationsByJobId(jobId) {
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM job_notifications
+      WHERE job_id = ?
+      ORDER BY created_at ASC, id ASC
+    `).all(jobId);
+
+    return rows.map(hydrateNotification);
+  }
+
+  markJobTriggered({ jobId, triggeredAt, nextRunAt = null }) {
+    const updatedAt = triggeredAt || new Date().toISOString();
+
+    this.db.prepare(`
+      UPDATE jobs
+      SET last_run_at = ?, next_run_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(triggeredAt, nextRunAt, updatedAt, jobId);
+
+    return this.getJob(jobId);
+  }
+
+  claimDueJob({ jobId, nowIso, nextRunAt = null }) {
+    const updatedAt = nowIso || new Date().toISOString();
+    const result = this.db.prepare(`
+      UPDATE jobs
+      SET last_run_at = ?, next_run_at = ?, updated_at = ?
+      WHERE id = ?
+        AND status = 'active'
+        AND next_run_at IS NOT NULL
+        AND next_run_at <= ?
+    `).run(updatedAt, nextRunAt, updatedAt, jobId, nowIso);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    return this.getJob(jobId);
+  }
+
+  claimDueJobAndCreateRun({
+    jobId,
+    nowIso,
+    nextRunAt = null,
+    triggerType,
+    startedAt,
+    runStatus,
+  }) {
+    const timestamp = nowIso || new Date().toISOString();
+    const tx = this.db.transaction((input) => {
+      const claim = this.db.prepare(`
+        UPDATE jobs
+        SET last_run_at = ?, next_run_at = ?, updated_at = ?
+        WHERE id = ?
+          AND status = 'active'
+          AND next_run_at IS NOT NULL
+          AND next_run_at <= ?
+      `).run(input.timestamp, input.nextRunAt, input.timestamp, input.jobId, input.timestamp);
+
+      if (claim.changes === 0) {
+        return null;
+      }
+
+      const run = this.createRun({
+        jobId: input.jobId,
+        triggerType: input.triggerType,
+        startedAt: input.startedAt || input.timestamp,
+        status: input.runStatus,
+      });
+
+      return {
+        job: this.getJob(input.jobId),
+        run,
+      };
+    });
+
+    return tx({
+      jobId,
+      timestamp,
+      nextRunAt,
+      triggerType,
+      startedAt,
+      runStatus,
+    });
+  }
+
   close() {
     if (!this.db) return;
     this.db.close();
