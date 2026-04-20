@@ -79,6 +79,8 @@ function hydrateNotification(row) {
   };
 }
 
+const NEXT_RUN_AT_UNSET = Symbol('next_run_at_unset');
+
 class JobsStore {
   constructor({ dbPath }) {
     if (!dbPath) {
@@ -187,6 +189,28 @@ class JobsStore {
   getJob(id) {
     const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     return hydrateJob(row);
+  }
+
+  updateJobStatus({ jobId, status, nextRunAt = NEXT_RUN_AT_UNSET, updatedAt = new Date().toISOString() }) {
+    const current = this.getJob(jobId);
+    if (!current) {
+      return null;
+    }
+
+    const resolvedNextRunAt = nextRunAt === NEXT_RUN_AT_UNSET ? current.next_run_at : nextRunAt;
+
+    this.db.prepare(`
+      UPDATE jobs
+      SET status = ?, next_run_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(status, resolvedNextRunAt, updatedAt, jobId);
+
+    return this.getJob(jobId);
+  }
+
+  deleteJob(id) {
+    const result = this.db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
+    return result.changes > 0;
   }
 
   getRun(id) {

@@ -8,12 +8,24 @@ const { TaskExecutor } = require('./task-executor');
 const { Deployer } = require('./deployer');
 const { WeixinAdapter } = require('./channels/weixin');
 const { resolveChannelBootstrapPlan } = require('./channel-bootstrap');
+const { JobsStore } = require('./jobs/store');
+const { OwnerTargets } = require('./jobs/targets');
+const { JobsNotifier } = require('./jobs/notifier');
+const { JobsService } = require('./jobs/service');
+const { ReminderScheduler } = require('./jobs/scheduler');
+const { parseReminderSchedule, computeNextRunAt } = require('./jobs/schedule');
 
 const activeAdapters = [];
+const activeResources = [];
 
 function retainAdapter(adapter) {
   activeAdapters.push(adapter);
   return adapter;
+}
+
+function retainResource(resource) {
+  activeResources.push(resource);
+  return resource;
 }
 
 async function main() {
@@ -33,6 +45,36 @@ async function main() {
     deployer: new Deployer(),
   }));
 
+  const jobsStore = new JobsStore({
+    dbPath: process.env.JOBS_DB_PATH || 'data/jobs.db',
+  });
+  const ownerTargets = new OwnerTargets({
+    filePath: process.env.JOB_TARGETS_PATH || 'data/job-targets.json',
+  });
+  const jobsNotifier = new JobsNotifier();
+  const jobsService = new JobsService({
+    store: jobsStore,
+    parseReminderSchedule,
+    computeNextRunAt,
+    resolveOwnerTarget: (ownerId) => ownerTargets.get(ownerId),
+  });
+  const reminderScheduler = new ReminderScheduler({
+    store: jobsStore,
+    notifier: jobsNotifier,
+    computeNextRunAt,
+  });
+  retainResource({
+    jobsStore,
+    ownerTargets,
+    jobsNotifier,
+    jobsService,
+    reminderScheduler,
+  });
+
+  jobsNotifier.register('feishu', async ({ target, text }) => {
+    return feishu.sendReminder({ chatId: target, text });
+  });
+
   if (channelPlan.feishu.enabled) {
     await feishu.start();
   } else {
@@ -44,18 +86,32 @@ async function main() {
   const web = retainAdapter(new WebAdapter());
   await web.start();
 
+  let wecom = null;
   if (channelPlan.wecom.enabled) {
     const { WeComAdapter } = require('./channels/wecom');
-    const wecom = retainAdapter(new WeComAdapter({ gateway }));
+    wecom = retainAdapter(new WeComAdapter({ gateway }));
+    jobsNotifier.register('wecom', async ({ target, text, meta = {} }) => {
+      return wecom.sendReminder({
+        chatId: target,
+        chatType: meta.chatType || 'p2p',
+        text,
+      });
+    });
     await wecom.start();
   } else {
     console.log(`[${BOT_NAME}] WeCom channel skipped (missing credentials)`);
   }
 
+  let weixin = null;
   if (String(process.env.WEIXIN_ENABLED).toLowerCase() === 'true') {
-    const weixin = retainAdapter(new WeixinAdapter({ gateway }));
+    weixin = retainAdapter(new WeixinAdapter({ gateway }));
+    jobsNotifier.register('weixin', async ({ target, text }) => {
+      return weixin.sendReminder({ userId: target, text });
+    });
     await weixin.start();
   }
+
+  reminderScheduler.start(Number(process.env.JOBS_TICK_INTERVAL_MS || '60000'));
 
   console.log(`[${BOT_NAME}] Gateway running ✓`);
 }

@@ -14,6 +14,30 @@ class ReminderScheduler {
     this.store = store;
     this.notifier = notifier;
     this.computeNextRunAt = computeNextRunAt;
+    this._timer = null;
+  }
+
+  start(intervalMs = 60_000) {
+    if (this._timer) {
+      return this._timer;
+    }
+
+    this._timer = setInterval(() => {
+      this.tick().catch((error) => {
+        console.error('[Jobs] ReminderScheduler tick failed:', error);
+      });
+    }, intervalMs);
+
+    return this._timer;
+  }
+
+  stop() {
+    if (!this._timer) {
+      return;
+    }
+
+    clearInterval(this._timer);
+    this._timer = null;
   }
 
   async tick(nowIso = new Date().toISOString()) {
