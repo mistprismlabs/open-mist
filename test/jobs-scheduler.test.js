@@ -130,6 +130,72 @@ describe('JobsService', () => {
     assert.equal(service.getJob(job.id), null);
     assert.equal(store.getJob(job.id), null);
   });
+
+  it('rejects creating a once reminder when the scheduled time has already passed', () => {
+    const rejectingService = new JobsService({
+      store,
+      parseReminderSchedule: (...args) => ({
+        kind: args[0],
+        expr: args[1],
+        timezone: args[2],
+      }),
+      computeNextRunAt: () => null,
+      resolveOwnerTarget: (ownerId) => ownerTargets.get(ownerId),
+    });
+
+    assert.throws(
+      () => rejectingService.createReminderJob({
+        creatorId: 'creator-4',
+        ownerId: 'owner-1',
+        scheduleKind: 'once',
+        scheduleExpr: '2020-04-20 09:30',
+        timezone: 'Asia/Shanghai',
+        text: 'Too late',
+      }),
+      /already passed|已过/
+    );
+
+    assert.equal(store.listJobs().length, 0);
+  });
+
+  it('rejects resuming a once reminder when the next scheduled time is already in the past', () => {
+    const resumeService = new JobsService({
+      store,
+      parseReminderSchedule: (...args) => ({
+        kind: args[0],
+        expr: args[1],
+        timezone: args[2],
+      }),
+      computeNextRunAt: (parsed, nowIso) => {
+        if (parsed.kind === 'once' && nowIso === '2026-04-20T02:00:00.000Z') {
+          return null;
+        }
+        return '2099-01-01T01:30:00.000Z';
+      },
+      resolveOwnerTarget: (ownerId) => ownerTargets.get(ownerId),
+    });
+
+    const job = resumeService.createReminderJob({
+      creatorId: 'creator-5',
+      ownerId: 'owner-1',
+      scheduleKind: 'once',
+      scheduleExpr: '2099-01-01 09:30',
+      timezone: 'Asia/Shanghai',
+      text: 'Resume later',
+    });
+
+    const paused = resumeService.pauseJob(job.id);
+    assert.equal(paused.status, 'paused');
+
+    assert.throws(
+      () => resumeService.resumeJob(job.id, '2026-04-20T02:00:00.000Z'),
+      /already passed|已过/
+    );
+
+    const storedJob = store.getJob(job.id);
+    assert.equal(storedJob.status, 'paused');
+    assert.equal(storedJob.next_run_at, '2099-01-01T01:30:00.000Z');
+  });
 });
 
 describe('ReminderScheduler', () => {

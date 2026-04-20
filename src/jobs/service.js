@@ -27,6 +27,7 @@ class JobsService {
     this._assertDeliveryTarget(resolvedTarget);
     const parsedSchedule = this.parseReminderSchedule(scheduleKind, scheduleExpr, timezone);
     const nextRunAt = this.computeNextRunAt(parsedSchedule, new Date().toISOString());
+    this._assertNextRunAt(nextRunAt, 'create');
     const policy = {};
 
     if (resolvedTarget.chatType) {
@@ -72,6 +73,7 @@ class JobsService {
 
     const parsedSchedule = this.parseReminderSchedule(job.schedule_kind, job.schedule_expr, job.timezone);
     const nextRunAt = this.computeNextRunAt(parsedSchedule, nowIso);
+    this._assertNextRunAt(nextRunAt, 'resume');
 
     return this.store.updateJobStatus({
       jobId: id,
@@ -110,6 +112,18 @@ class JobsService {
     }
 
     this.assertDeliveryTarget(resolvedTarget);
+  }
+
+  _assertNextRunAt(nextRunAt, operation) {
+    if (nextRunAt != null) {
+      return;
+    }
+
+    if (operation === 'resume') {
+      throw new Error('Reminder time has already passed and cannot be resumed.');
+    }
+
+    throw new Error('Reminder time has already passed.');
   }
 }
 
