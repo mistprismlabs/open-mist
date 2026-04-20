@@ -356,6 +356,21 @@ class JobsStore {
     return this.getJob(jobId);
   }
 
+  restoreClaimedJob({
+    jobId,
+    lastRunAt = null,
+    nextRunAt = null,
+    updatedAt = new Date().toISOString(),
+  }) {
+    this.db.prepare(`
+      UPDATE jobs
+      SET last_run_at = ?, next_run_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(lastRunAt, nextRunAt, updatedAt, jobId);
+
+    return this.getJob(jobId);
+  }
+
   claimDueJobAndCreateRun({
     jobId,
     nowIso,

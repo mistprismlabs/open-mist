@@ -79,20 +79,28 @@ class ReminderScheduler {
         deliveryErrorText = error?.message || String(error);
       }
 
-      if (deliverySucceeded) {
-        try {
-          this.store.createNotification({
-            jobId: job.id,
-            runId: run.id,
-            channel: job.delivery_channel,
-            target,
-            status: 'sent',
-            message: text,
-            attemptedAt: nowIso,
-          });
-        } catch (error) {
-          notificationErrorText = error?.message || String(error);
-        }
+      try {
+        this.store.createNotification({
+          jobId: job.id,
+          runId: run.id,
+          channel: job.delivery_channel,
+          target,
+          status: deliverySucceeded ? 'sent' : 'failed',
+          message: text,
+          attemptedAt: nowIso,
+          errorText: deliverySucceeded ? null : deliveryErrorText,
+        });
+      } catch (error) {
+        notificationErrorText = error?.message || String(error);
+      }
+
+      if (!deliverySucceeded) {
+        this.store.restoreClaimedJob({
+          jobId: job.id,
+          lastRunAt: job.last_run_at,
+          nextRunAt: job.next_run_at,
+          updatedAt: nowIso,
+        });
       }
 
       const status = deliverySucceeded ? 'succeeded' : 'failed';
@@ -100,7 +108,18 @@ class ReminderScheduler {
         ? (notificationErrorText
             ? { delivered: true, notificationRecorded: false, notificationError: notificationErrorText }
             : { delivered: true, notificationRecorded: true })
-        : { delivered: false, error: deliveryErrorText };
+        : (notificationErrorText
+            ? {
+                delivered: false,
+                error: deliveryErrorText,
+                notificationRecorded: false,
+                notificationError: notificationErrorText,
+              }
+            : {
+                delivered: false,
+                error: deliveryErrorText,
+                notificationRecorded: true,
+              });
 
       this.store.finishRun({
         runId: run.id,
