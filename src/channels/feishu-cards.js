@@ -371,6 +371,70 @@ function createCardBuilder({ session, gateway, memory, metrics }) {
     ]);
   }
 
+  function buildReminderCard() {
+    const defaultTimezone = process.env.JOBS_DEFAULT_TIMEZONE || 'Asia/Shanghai';
+    return _createCard('提醒任务', 'blue', [
+      { tag: 'markdown', content: '创建提醒型任务。适合给自己或家人设置一次性或重复提醒。' },
+      { tag: 'markdown', content: '**填写规则**\n- `owner_id`：提醒归属对象，例如 `me`、`parent-mom`\n- `once`：`YYYY-MM-DD HH:mm`\n- `daily`：`HH:mm`\n- `weekday`：`HH:mm`\n- `weekly`：`mon HH:mm` / `fri 18:30`' },
+      { tag: 'hr' },
+      {
+        tag: 'form',
+        name: 'reminder_form',
+        elements: [
+          {
+            tag: 'input',
+            name: 'reminder_owner_id',
+            required: true,
+            placeholder: { tag: 'plain_text', content: 'owner_id，例如 me 或 parent-mom' },
+            width: 'fill',
+          },
+          {
+            tag: 'select_static',
+            name: 'reminder_schedule_kind',
+            initial_option: 'daily',
+            options: [
+              { text: { tag: 'plain_text', content: '一次性 once' }, value: 'once' },
+              { text: { tag: 'plain_text', content: '每天 daily' }, value: 'daily' },
+              { text: { tag: 'plain_text', content: '工作日 weekday' }, value: 'weekday' },
+              { text: { tag: 'plain_text', content: '每周 weekly' }, value: 'weekly' },
+            ],
+          },
+          {
+            tag: 'input',
+            name: 'reminder_schedule_expr',
+            required: true,
+            placeholder: { tag: 'plain_text', content: '例如 09:30 或 2026-04-21 08:00 或 mon 09:30' },
+            width: 'fill',
+          },
+          {
+            tag: 'input',
+            name: 'reminder_timezone',
+            default_value: defaultTimezone,
+            placeholder: { tag: 'plain_text', content: '时区，例如 Asia/Shanghai' },
+            width: 'fill',
+          },
+          {
+            tag: 'input',
+            name: 'reminder_text',
+            required: true,
+            input_type: 'multiline_text',
+            rows: 4,
+            width: 'fill',
+            placeholder: { tag: 'plain_text', content: '提醒内容，例如 记得给爸妈打电话' },
+            max_length: 500,
+          },
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '创建提醒' },
+            type: 'primary',
+            action_type: 'form_submit',
+            name: 'submit_reminder',
+          },
+        ],
+      },
+    ]);
+  }
+
   function buildUpdateCard() {
     const availablePath = path.join(__dirname, '..', '..', 'data', 'updates', 'available.json');
     if (!fs.existsSync(availablePath)) {
@@ -520,6 +584,9 @@ function createCardBuilder({ session, gateway, memory, metrics }) {
       { tag: 'markdown', content: `**⚡ 执行任务** \`/task\`\n让 ${botName} 在服务器执行任务，完成后通知\n适合：运维操作、数据处理、日志分析、脚本执行` },
       { tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'task' } },
       { tag: 'hr' },
+      { tag: 'markdown', content: `**⏰ 提醒任务** \`/remind\`\n创建提醒型任务，默认投递到 owner 的主通道\n适合：自己或家人的定时提醒、吃药提醒、每周例行提醒` },
+      { tag: 'button', text: { tag: 'plain_text', content: '打开' }, type: 'primary', value: { action: 'open_command', cmd: 'remind' } },
+      { tag: 'hr' },
       { tag: 'markdown', content: '**开发工具**' },
       {
         tag: 'column_set',
@@ -606,6 +673,7 @@ function createCardBuilder({ session, gateway, memory, metrics }) {
     buildMemoryCard,
     buildBuildCard,
     buildTaskCard,
+    buildReminderCard,
     buildUpdateCard,
     buildDevCard,
     buildOnboardingCard,

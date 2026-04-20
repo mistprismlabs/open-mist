@@ -303,6 +303,47 @@ WEB_PORT=3003
 
 例如第二个实例可以改成 `3303`、`3304` 等未占用端口。
 
+如果要启用提醒型 jobs，再额外确认这些运行时变量：
+
+- `JOBS_DB_PATH`
+- `JOB_TARGETS_PATH`
+- `JOBS_ADMIN_IDS`
+- `JOBS_DEFAULT_TIMEZONE`
+- `JOBS_TICK_INTERVAL_MS`
+
+推荐保持默认值，只有在多实例或数据目录单独挂载时再改路径。
+
+`JOB_TARGETS_PATH` 默认指向 `data/job-targets.json`。它是一个**私有**映射文件，用来定义 `owner_id -> 默认投递终端`，不应该提交回公开仓库。
+
+`JOBS_ADMIN_IDS` 用逗号分隔提醒任务管理员的飞书 `open_id`。如果留空，会 fallback 到 `ADMIN_USER_ID`，再 fallback 到 `FEISHU_OWNER_ID`。提醒创建和代管入口默认只开放给这些管理员。
+
+最小示例：
+
+```json
+{
+  "me": { "channel": "feishu", "target": "oc_admin_chat" },
+  "parent-mom": { "channel": "weixin", "target": "wx_user_mom" },
+  "parent-dad": { "channel": "wecom", "target": "external_user_dad", "chatType": "p2p" }
+}
+```
+
+提醒型 jobs 的当前飞书入口是：
+
+- `/remind`：打开提醒创建卡片
+- `/jobs`：查看最近提醒任务
+- `/job pause <id>`
+- `/job resume <id>`
+- `/job delete <id>`
+
+其中 `/remind` 和跨 owner 的代管操作默认只开放给 `JOBS_ADMIN_IDS` 指定的管理员；非管理员的 `/jobs` 只会看到自己创建的任务，也只能操作自己创建的任务。
+
+当前 WeCom reminder 只支持 **Bot WebSocket** 投递。如果 `JOB_TARGETS_PATH` 里把 owner 默认终端指向 `wecom`，还需要同时配置：
+
+- `WECOM_BOT_ID`
+- `WECOM_BOT_SECRET`
+
+只有 App 通道而没有 Bot 通道时，OpenMist 仍可接收企微 App 消息，但暂不支持把 reminder jobs 投递到 WeCom。
+
 配置完成后执行：
 
 ```bash

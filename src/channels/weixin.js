@@ -385,6 +385,14 @@ class WeixinAdapter {
     return { messageId: clientId };
   }
 
+  async sendReminder({ userId, text }) {
+    return this._sendText({
+      to: userId,
+      text,
+      contextToken: this.contextTokens.get(userId),
+    });
+  }
+
   async _postJson(endpoint, payload, timeoutMs) {
     const body = JSON.stringify(payload);
     const controller = new AbortController();

@@ -41,9 +41,13 @@ describe('public surface cards', () => {
 
   it('keeps task help and onboarding defaults generic', () => {
     const taskCard = JSON.stringify(builder.buildTaskCard());
+    const reminderCard = JSON.stringify(builder.buildReminderCard());
+    const helpCard = JSON.stringify(builder.buildHelpCard());
     const onboardingCard = JSON.stringify(builder.buildOnboardingCard());
 
     assert.ok(!taskCard.includes('Jarvis'));
+    assert.ok(!reminderCard.includes('Jarvis'));
+    assert.match(helpCard, /\/remind/);
     assert.ok(!onboardingCard.includes('Jarvis'));
     assert.ok(!onboardingCard.includes('先生'));
   });

@@ -547,6 +547,41 @@ class WeComAdapter {
     });
   }
 
+  sendReminder({ chatId, chatType = 'p2p', text }) {
+    return this._sendMessageStrict(chatId, chatType, text);
+  }
+
+  async _sendMessageStrict(chatId, chatType, content, msgtype = 'markdown') {
+    const payload = {
+      cmd: 'aibot_send_msg',
+      headers: { req_id: crypto.randomUUID() },
+      body: {
+        chatid: chatId,
+        chat_type: chatType === 'group' ? 2 : 1,
+        msgtype,
+        markdown: { content },
+      },
+    };
+
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not open');
+    }
+
+    await new Promise((resolve, reject) => {
+      try {
+        this.ws.send(JSON.stringify(payload), (err) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve();
+        });
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
   // ==================== URL 验证（GET，App 通道） ====================
 
   _verifyURL(req, res, channel) {
