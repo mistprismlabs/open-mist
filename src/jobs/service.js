@@ -51,6 +51,10 @@ class JobsService {
     return this.store.getJob(id);
   }
 
+  listJobs({ status, ownerId, limit } = {}) {
+    return this.store.listJobs({ status, ownerId, limit });
+  }
+
   pauseJob(id) {
     return this.store.updateJobStatus({
       jobId: id,

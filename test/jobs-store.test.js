@@ -118,6 +118,73 @@ describe('JobsStore', () => {
     );
   });
 
+  it('lists recent jobs with optional status and owner filters', () => {
+    store.createJob({
+      id: 'job-old',
+      type: 'reminder',
+      creatorId: 'creator-a',
+      ownerId: 'owner-a',
+      deliveryChannel: 'feishu',
+      deliveryTarget: 'chat-a',
+      timezone: 'Asia/Shanghai',
+      scheduleKind: 'daily',
+      scheduleExpr: '09:30',
+      nextRunAt: '2026-04-20T01:30:00.000Z',
+      status: 'paused',
+      payload: { text: 'older' },
+      policy: {},
+      createdAt: '2026-04-20T00:00:00.000Z',
+      updatedAt: '2026-04-20T00:00:00.000Z',
+    });
+    store.createJob({
+      id: 'job-new',
+      type: 'reminder',
+      creatorId: 'creator-b',
+      ownerId: 'owner-a',
+      deliveryChannel: 'weixin',
+      deliveryTarget: 'wx-user',
+      timezone: 'Asia/Shanghai',
+      scheduleKind: 'once',
+      scheduleExpr: '2026-04-21 08:00',
+      nextRunAt: '2026-04-21T00:00:00.000Z',
+      status: 'active',
+      payload: { text: 'newer' },
+      policy: {},
+      createdAt: '2026-04-20T01:00:00.000Z',
+      updatedAt: '2026-04-20T01:00:00.000Z',
+    });
+    store.createJob({
+      id: 'job-other-owner',
+      type: 'reminder',
+      creatorId: 'creator-c',
+      ownerId: 'owner-b',
+      deliveryChannel: 'wecom',
+      deliveryTarget: 'wecom-user',
+      timezone: 'Asia/Shanghai',
+      scheduleKind: 'weekday',
+      scheduleExpr: '18:00',
+      nextRunAt: '2026-04-20T10:00:00.000Z',
+      status: 'active',
+      payload: { text: 'other owner' },
+      policy: {},
+      createdAt: '2026-04-20T02:00:00.000Z',
+      updatedAt: '2026-04-20T02:00:00.000Z',
+    });
+
+    assert.deepEqual(
+      store.listJobs({ limit: 2 }).map((job) => job.id),
+      ['job-other-owner', 'job-new']
+    );
+    assert.deepEqual(
+      store.listJobs({ ownerId: 'owner-a' }).map((job) => job.id),
+      ['job-new', 'job-old']
+    );
+    assert.deepEqual(
+      store.listJobs({ status: 'active', ownerId: 'owner-a' }).map((job) => job.id),
+      ['job-new']
+    );
+  });
+
   it('records runs and notification attempts', () => {
     const job = store.createJob({
       type: 'reminder',

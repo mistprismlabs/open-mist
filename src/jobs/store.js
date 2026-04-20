@@ -236,6 +236,32 @@ class JobsStore {
     return rows.map(hydrateJob);
   }
 
+  listJobs({ status = null, ownerId = null, limit = 20 } = {}) {
+    const conditions = [];
+    const params = [];
+
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+    if (ownerId) {
+      conditions.push('owner_id = ?');
+      params.push(ownerId);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const cappedLimit = Number.isInteger(limit) && limit > 0 ? limit : 20;
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM jobs
+      ${whereClause}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(...params, cappedLimit);
+
+    return rows.map(hydrateJob);
+  }
+
   createRun({ jobId, triggerType, startedAt, status }) {
     const now = startedAt || new Date().toISOString();
     const row = {

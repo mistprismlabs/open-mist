@@ -183,3 +183,18 @@ test('.env example and deploy doc mention the instance-specific web port', () =>
   assert.match(deployDoc, /3003/);
   assert.match(deployDoc, /同机多实例|multiple instances|实例级/i);
 });
+
+test('.env example and deploy doc describe reminder job runtime paths and private owner-target mapping', () => {
+  const deployDoc = read(deployDocPath);
+  const envExample = read(path.join(root, '.env.example'));
+
+  assert.match(envExample, /JOBS_DB_PATH=/);
+  assert.match(envExample, /JOB_TARGETS_PATH=/);
+  assert.match(envExample, /JOBS_DEFAULT_TIMEZONE=/);
+  assert.match(envExample, /JOBS_TICK_INTERVAL_MS=/);
+  assert.match(deployDoc, /JOBS_DB_PATH/);
+  assert.match(deployDoc, /JOB_TARGETS_PATH/);
+  assert.match(deployDoc, /owner/i);
+  assert.match(deployDoc, /job-targets\.json/);
+  assert.match(deployDoc, /私有|private/i);
+});

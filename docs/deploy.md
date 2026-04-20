@@ -303,6 +303,35 @@ WEB_PORT=3003
 
 例如第二个实例可以改成 `3303`、`3304` 等未占用端口。
 
+如果要启用提醒型 jobs，再额外确认这些运行时变量：
+
+- `JOBS_DB_PATH`
+- `JOB_TARGETS_PATH`
+- `JOBS_DEFAULT_TIMEZONE`
+- `JOBS_TICK_INTERVAL_MS`
+
+推荐保持默认值，只有在多实例或数据目录单独挂载时再改路径。
+
+`JOB_TARGETS_PATH` 默认指向 `data/job-targets.json`。它是一个**私有**映射文件，用来定义 `owner_id -> 默认投递终端`，不应该提交回公开仓库。
+
+最小示例：
+
+```json
+{
+  "me": { "channel": "feishu", "target": "oc_admin_chat" },
+  "parent-mom": { "channel": "weixin", "target": "wx_user_mom" },
+  "parent-dad": { "channel": "wecom", "target": "external_user_dad", "chatType": "p2p" }
+}
+```
+
+提醒型 jobs 的当前飞书入口是：
+
+- `/remind`：打开提醒创建卡片
+- `/jobs`：查看最近提醒任务
+- `/job pause <id>`
+- `/job resume <id>`
+- `/job delete <id>`
+
 配置完成后执行：
 
 ```bash

@@ -18,7 +18,7 @@ const STALE_THRESHOLD_MS = 30 * 1000;
 const SUPPORTED_MSG_TYPES = ["text", "image", "post", "file"];
 
 class FeishuAdapter {
-  constructor({ gateway, bitable, taskExecutor, deployer }) {
+  constructor({ gateway, bitable, taskExecutor, deployer, jobsService }) {
     this.gateway = gateway;
     // 通过 gateway 访问共享资源（卡片构建等需要）
     this.session = gateway.session;
@@ -28,6 +28,7 @@ class FeishuAdapter {
     this.bitable = bitable;
     this.taskExecutor = taskExecutor;
     this.deployer = deployer;
+    this.jobsService = jobsService || null;
     this.handled = new Map();
     this._lastProgress = new Map(); // chatId → timestamp，进度防刷屏
     this._placeholders = new Map(); // chatId → placeholderId，流式占位消息
@@ -246,7 +247,7 @@ class FeishuAdapter {
       await this._checkPendingNotifications(messageId);
 
       // === 菜单指令处理 ===
-      const bareCmd = text.match(/^\/(build|task|session|status|help|log|cos|memory|dev-go|dev-fix|dev-refactor|update)$/);
+      const bareCmd = text.match(/^\/(build|task|remind|jobs|session|status|help|log|cos|memory|dev-go|dev-fix|dev-refactor|update)$/);
       if (bareCmd) {
         await this._handleMenuCommand(messageId, chatId, bareCmd[1]);
         return;
@@ -262,6 +263,12 @@ class FeishuAdapter {
       if (taskMatch) {
         await this._reply(messageId, `⚡ 收到，开始执行…`);
         this._runGatewayTaskAsync(chatId, taskMatch[1].trim());
+        return;
+      }
+
+      const jobCommandMatch = text.match(/^\/job\s+(pause|resume|delete)\s+([A-Za-z0-9_-]+)\s*$/);
+      if (jobCommandMatch) {
+        await this._handleJobControlCommand(messageId, jobCommandMatch[1], jobCommandMatch[2]);
         return;
       }
 
@@ -472,6 +479,36 @@ class FeishuAdapter {
           const preview = instruction.length > 30 ? instruction.slice(0, 30) + '…' : instruction;
           return { toast: { type: 'success', content: `收到，开始执行：${preview}` } };
         }
+        if (action.form_value?.reminder_owner_id !== undefined) {
+          if (!this.jobsService) {
+            return { toast: { type: 'error', content: '提醒任务功能暂未启用' } };
+          }
+
+          const ownerId = action.form_value.reminder_owner_id.trim();
+          const scheduleKind = String(action.form_value.reminder_schedule_kind || '').trim();
+          const scheduleExpr = String(action.form_value.reminder_schedule_expr || '').trim();
+          const timezone = String(action.form_value.reminder_timezone || process.env.JOBS_DEFAULT_TIMEZONE || 'Asia/Shanghai').trim();
+          const reminderText = String(action.form_value.reminder_text || '').trim();
+
+          if (!ownerId || !scheduleKind || !scheduleExpr || !reminderText) {
+            return { toast: { type: 'error', content: '请完整填写提醒任务表单' } };
+          }
+
+          const job = this.jobsService.createReminderJob({
+            creatorId: this._resolveCardOperatorId(data, chatId),
+            ownerId,
+            scheduleKind,
+            scheduleExpr,
+            timezone,
+            text: reminderText,
+          });
+
+          await this._sendMessage(
+            chatId,
+            `已创建提醒任务：${job.id}\nowner: ${job.owner_id}\nschedule: ${job.schedule_kind} ${job.schedule_expr}\nnext: ${job.next_run_at || '待计算'}\ntext: ${job.payload?.text || ''}`
+          );
+          return { toast: { type: 'success', content: `已创建提醒：${job.id}` } };
+        }
         if (action.form_value?.session_name !== undefined) {
           const name = action.form_value.session_name.trim();
           this.session.setName(chatId, name);
@@ -590,6 +627,60 @@ class FeishuAdapter {
     if (this.recentLogs.length > 20) this.recentLogs.shift();
   }
 
+  async _handleJobControlCommand(messageId, action, jobId) {
+    if (!this.jobsService) {
+      await this._reply(messageId, '提醒任务功能暂未启用。');
+      return;
+    }
+
+    if (action === 'pause') {
+      const job = this.jobsService.pauseJob(jobId);
+      await this._reply(messageId, job ? `已暂停提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    if (action === 'resume') {
+      const job = this.jobsService.resumeJob(jobId);
+      await this._reply(messageId, job ? `已恢复提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    if (action === 'delete') {
+      const deleted = this.jobsService.deleteJob(jobId);
+      await this._reply(messageId, deleted ? `已删除提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    await this._reply(messageId, '不支持的任务操作。');
+  }
+
+  _formatJobsListText(jobs) {
+    if (!Array.isArray(jobs) || jobs.length === 0) {
+      return '当前没有提醒任务。';
+    }
+
+    const lines = jobs.map((job, index) => {
+      const text = job?.payload?.text || '';
+      return [
+        `${index + 1}. \`${job.id}\``,
+        `owner=${job.owner_id}`,
+        `status=${job.status}`,
+        `schedule=${job.schedule_kind} ${job.schedule_expr}`,
+        `next=${job.next_run_at || '无'}`,
+        text ? `text=${text}` : null,
+      ].filter(Boolean).join(' | ');
+    });
+
+    return `当前提醒任务：\n${lines.join('\n')}`;
+  }
+
+  _resolveCardOperatorId(data, fallbackChatId) {
+    return data?.operator?.operator_id?.open_id
+      || data?.operator?.operator_id?.user_id
+      || data?.operator?.open_id
+      || fallbackChatId;
+  }
+
   // ==================== 菜单指令 ====================
 
   async _handleMenuCommand(messageId, chatId, cmd) {
@@ -626,6 +717,17 @@ class FeishuAdapter {
 
     if (cmd === 'task') {
       await this._replyCard(messageId, this.cards.buildTaskCard());
+      return;
+    }
+
+    if (cmd === 'remind') {
+      await this._replyCard(messageId, this.cards.buildReminderCard());
+      return;
+    }
+
+    if (cmd === 'jobs') {
+      const jobs = this.jobsService ? this.jobsService.listJobs({ limit: 10 }) : [];
+      await this._reply(messageId, this._formatJobsListText(jobs));
       return;
     }
 

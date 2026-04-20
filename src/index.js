@@ -38,13 +38,6 @@ async function main() {
     claude: new ClaudeClient(),
   });
 
-  const feishu = retainAdapter(new FeishuAdapter({
-    gateway,
-    bitable: new BitableLogger(),
-    taskExecutor: new TaskExecutor(),
-    deployer: new Deployer(),
-  }));
-
   const jobsStore = new JobsStore({
     dbPath: process.env.JOBS_DB_PATH || 'data/jobs.db',
   });
@@ -70,6 +63,14 @@ async function main() {
     jobsService,
     reminderScheduler,
   });
+
+  const feishu = retainAdapter(new FeishuAdapter({
+    gateway,
+    bitable: new BitableLogger(),
+    taskExecutor: new TaskExecutor(),
+    deployer: new Deployer(),
+    jobsService,
+  }));
 
   jobsNotifier.register('feishu', async ({ target, text }) => {
     return feishu.sendReminder({ chatId: target, text });
