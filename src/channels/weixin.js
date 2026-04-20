@@ -207,13 +207,13 @@ class WeixinAdapter {
     this._loopPromise = null;
 
     this.gateway.registerProgressCallback('weixin', async (targetId, info) => {
-      if (typeof targetId !== 'string' || !targetId.startsWith(WEIXIN_PROGRESS_PREFIX)) return;
+      if (typeof targetId !== 'string' || !targetId.startsWith(WEIXIN_PROGRESS_PREFIX)) return false;
 
       const userId = targetId.slice(WEIXIN_PROGRESS_PREFIX.length);
       const now = Date.now();
       const isRetry = info?.type === 'retry';
       const isAlert = info?.type === 'alert';
-      if (!isRetry && !isAlert && now - (this.progressNotifiedAt.get(userId) || 0) < 30 * 1000) return;
+      if (!isRetry && !isAlert && now - (this.progressNotifiedAt.get(userId) || 0) < 30 * 1000) return false;
 
       let text;
       if (isRetry) {
@@ -222,11 +222,11 @@ class WeixinAdapter {
         text = info.text || info.summary || info.description || null;
       } else {
         const rawText = typeof info === 'string' ? info : (info?.summary || info?.description || null);
-        if (!rawText || !rawText.startsWith('📋 ')) return;
+        if (!rawText || !rawText.startsWith('📋 ')) return false;
         this.progressNotifiedAt.set(userId, now);
         text = `⚙️ ${rawText}`;
       }
-      if (!text) return;
+      if (!text) return false;
 
       try {
         await this._sendText({
@@ -234,8 +234,10 @@ class WeixinAdapter {
           text,
           contextToken: this.contextTokens.get(userId),
         });
+        return true;
       } catch (err) {
         console.warn('[Weixin] Progress notify failed:', err.message);
+        return false;
       }
     });
   }

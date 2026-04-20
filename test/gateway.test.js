@@ -201,7 +201,7 @@ describe('Gateway runtime capability prompt', () => {
 });
 
 describe('Gateway operational issue routing', () => {
-  it('routes contextual operational alerts to the active progress target', () => {
+  it('routes contextual operational alerts to the active progress target when delivery succeeds', async () => {
     const calls = [];
     const gateway = new Gateway({
       session: { sessions: {}, get() { return null; }, set() {}, clear() {} },
@@ -216,12 +216,13 @@ describe('Gateway operational issue routing', () => {
       },
     });
 
-    gateway.registerProgressCallback('feishu', (targetId, info) => {
+    gateway.registerProgressCallback('feishu', async (targetId, info) => {
       calls.push({ targetId, info });
+      return true;
     });
 
     const spawned = [];
-    const route = gateway._notifyOperationalIssue({
+    const route = await gateway._notifyOperationalIssue({
       progressTargetId: 'feishu:chat-1',
       userInfo: { type: 'alert', text: '⚠️ 本次处理遇到运行异常，请稍后重试。' },
       notifyMessage: 'detailed fallback message',
@@ -237,7 +238,38 @@ describe('Gateway operational issue routing', () => {
     assert.deepEqual(spawned, []);
   });
 
-  it('falls back to notify script when no progress target exists', () => {
+  it('falls back to notify script when delivery to the source chat fails', async () => {
+    const gateway = new Gateway({
+      session: { sessions: {}, get() { return null; }, set() {}, clear() {} },
+      claude: {},
+      memory: {
+        retrieveRelevantMemories: async () => ({ systemMessage: '', recentConversations: [] }),
+        startConversation() {},
+        recordMessage() {},
+        archiveMessage() {},
+        recordEntities() {},
+        shouldCompress() { return false; },
+      },
+    });
+
+    gateway.registerProgressCallback('feishu', async () => false);
+
+    const spawned = [];
+    const route = await gateway._notifyOperationalIssue({
+      progressTargetId: 'feishu:chat-1',
+      userInfo: { type: 'alert', text: '⚠️ 本次处理遇到运行异常，请稍后重试。' },
+      notifyMessage: 'detailed fallback message',
+      spawnFn: (...args) => spawned.push(args),
+      notifyScriptPath: '/tmp/send-notify.js',
+    });
+
+    assert.equal(route, 'notify');
+    assert.equal(spawned.length, 1);
+    assert.equal(spawned[0][0], 'node');
+    assert.deepEqual(spawned[0][1], ['/tmp/send-notify.js', 'detailed fallback message']);
+  });
+
+  it('falls back to notify script when no progress target exists', async () => {
     const gateway = new Gateway({
       session: { sessions: {}, get() { return null; }, set() {}, clear() {} },
       claude: {},
@@ -252,7 +284,7 @@ describe('Gateway operational issue routing', () => {
     });
 
     const spawned = [];
-    const route = gateway._notifyOperationalIssue({
+    const route = await gateway._notifyOperationalIssue({
       progressTargetId: null,
       userInfo: { type: 'alert', text: '⚠️ 本次处理遇到运行异常，请稍后重试。' },
       notifyMessage: 'detailed fallback message',
