@@ -35,7 +35,7 @@ function ensureDirectoryWritable(dirPath, label) {
     fs.mkdirSync(dirPath, { recursive: true });
     fs.accessSync(dirPath, fs.constants.W_OK);
   } catch (err) {
-    throw new Error(`${label}不可写：${dirPath}（${String(err.message || err)}）`);
+    throw new Error(`${label}不可写：${dirPath}（${String(err.message || err)}）`, { cause: err });
   }
 }
 
