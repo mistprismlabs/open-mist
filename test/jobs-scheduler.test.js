@@ -7,11 +7,130 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { JobsStore } = require('../src/jobs/store');
+const { JobsService } = require('../src/jobs/service');
+const { OwnerTargets } = require('../src/jobs/targets');
 const { JobsNotifier } = require('../src/jobs/notifier');
 const { ReminderScheduler } = require('../src/jobs/scheduler');
 const { computeNextRunAt: computeReminderNextRunAt } = require('../src/jobs/schedule');
 const { FeishuAdapter } = require('../src/channels/feishu');
 const { WeComAdapter } = require('../src/channels/wecom');
+
+describe('JobsService', () => {
+  let tempRoot;
+  let store;
+  let ownerTargets;
+  let service;
+  let parseScheduleCalls;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'openmist-jobs-service-'));
+    store = new JobsStore({ dbPath: path.join(tempRoot, 'data', 'jobs.db') });
+    const targetsPath = path.join(tempRoot, 'private', 'owner-targets.json');
+    fs.mkdirSync(path.dirname(targetsPath), { recursive: true });
+    fs.writeFileSync(
+      targetsPath,
+      JSON.stringify({
+        'owner-1': { channel: 'feishu', target: 'chat-owner-1' },
+      }),
+      'utf8'
+    );
+    ownerTargets = new OwnerTargets({ filePath: targetsPath });
+    parseScheduleCalls = [];
+
+    service = new JobsService({
+      store,
+      parseReminderSchedule: (...args) => {
+        parseScheduleCalls.push(args);
+        return {
+          kind: args[0],
+          expr: args[1],
+          timezone: 'Asia/Shanghai',
+          time: '09:30',
+        };
+      },
+      computeNextRunAt: (parsed, nowIso) => {
+        if (parsed.kind === 'daily' && nowIso === '2026-04-20T02:00:00.000Z') {
+          return '2026-04-21T01:30:00.000Z';
+        }
+
+        if (parsed.kind === 'daily') {
+          return '2026-04-20T01:30:00.000Z';
+        }
+
+        if (parsed.kind === 'once') {
+          return '2099-01-01T01:30:00.000Z';
+        }
+
+        return '2026-04-21T01:30:00.000Z';
+      },
+      resolveOwnerTarget: (ownerId) => ownerTargets.get(ownerId),
+    });
+  });
+
+  afterEach(() => {
+    if (store) store.close();
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('creates a reminder job with the resolved owner target and computed next run', () => {
+    const job = service.createReminderJob({
+      creatorId: 'creator-1',
+      ownerId: 'owner-1',
+      scheduleKind: 'daily',
+      scheduleExpr: '09:30',
+      timezone: 'Asia/Shanghai',
+      text: 'Stand up',
+    });
+
+    assert.equal(job.type, 'reminder');
+    assert.equal(job.creator_id, 'creator-1');
+    assert.equal(job.owner_id, 'owner-1');
+    assert.equal(job.delivery_channel, 'feishu');
+    assert.equal(job.delivery_target, 'chat-owner-1');
+    assert.equal(job.status, 'active');
+    assert.equal(job.schedule_kind, 'daily');
+    assert.equal(job.schedule_expr, '09:30');
+    assert.equal(job.timezone, 'Asia/Shanghai');
+    assert.equal(job.next_run_at, '2026-04-20T01:30:00.000Z');
+    assert.deepEqual(job.payload, { text: 'Stand up' });
+    assert.deepEqual(store.getJob(job.id), job);
+    assert.deepEqual(parseScheduleCalls, [['daily', '09:30', 'Asia/Shanghai']]);
+  });
+
+  it('pauses and resumes a reminder job', () => {
+    const job = service.createReminderJob({
+      creatorId: 'creator-2',
+      ownerId: 'owner-1',
+      scheduleKind: 'daily',
+      scheduleExpr: '09:30',
+      timezone: 'Asia/Shanghai',
+      text: 'Daily sync',
+    });
+
+    const paused = service.pauseJob(job.id);
+    assert.equal(paused.status, 'paused');
+    assert.equal(paused.next_run_at, '2026-04-20T01:30:00.000Z');
+
+    const resumed = service.resumeJob(job.id, '2026-04-20T02:00:00.000Z');
+    assert.equal(resumed.status, 'active');
+    assert.equal(resumed.next_run_at, '2026-04-21T01:30:00.000Z');
+  });
+
+  it('deletes a reminder job', () => {
+    const job = service.createReminderJob({
+      creatorId: 'creator-3',
+      ownerId: 'owner-1',
+      scheduleKind: 'once',
+      scheduleExpr: '2026-04-20 09:30',
+      timezone: 'Asia/Shanghai',
+      text: 'One-time reminder',
+    });
+
+    assert.equal(service.deleteJob(job.id), true);
+    assert.equal(service.getJob(job.id), null);
+    assert.equal(store.getJob(job.id), null);
+  });
+});
 
 describe('ReminderScheduler', () => {
   let tempRoot;
