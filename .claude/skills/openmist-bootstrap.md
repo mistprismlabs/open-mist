@@ -87,6 +87,16 @@ BOOTSTRAP_DRY_RUN=1 APP_USER=openmist bash ./scripts/bootstrap-user.sh
 
 如果 `npm install` 失败，先回到运行时和编译工具链检查，不要跳过错误继续后面的 `.env` 和 `systemd`。
 
+如果这是旧实例升级到新的 checkout 路径，而不是首次安装，在进入 `.env` 和 service 阶段前，先检查旧状态是否仍留在旧项目目录。
+
+优先检查：
+
+- `data/sessions.json`
+- `data/user-profiles.json`
+- `data/memory/`
+
+如果新 checkout 看起来像首次安装，但操作者明确这是升级，则优先迁移上述状态，再继续后续阶段；不要在状态未迁移时把升级实例当成全新安装继续初始化。
+
 ## Phase 5: Config Bootstrap
 
 目标：得到一个可运行、shell-safe 的 `.env`。

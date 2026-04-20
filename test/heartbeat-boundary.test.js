@@ -9,6 +9,10 @@ const heartbeatSource = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'heartbeat.js'),
   'utf8'
 );
+const heartbeatChecksPath = path.join(__dirname, '..', 'src', 'heartbeat', 'checks.js');
+const heartbeatChecksSource = fs.existsSync(heartbeatChecksPath)
+  ? fs.readFileSync(heartbeatChecksPath, 'utf8')
+  : heartbeatSource;
 
 describe('heartbeat boundary', () => {
   it('does not hardcode instance task log checks', () => {
@@ -50,6 +54,17 @@ describe('heartbeat boundary', () => {
 
     for (const token of forbiddenAssumptions) {
       assert.ok(!heartbeatSource.includes(token), `heartbeat.js still hardcodes ${token}`);
+    }
+  });
+
+  it('does not treat any bare claude process as a killable orphan', () => {
+    const forbiddenPatterns = [
+      '/^claude\\b/',
+      '/\\/\\.local\\/bin\\/claude/',
+    ];
+
+    for (const token of forbiddenPatterns) {
+      assert.ok(!heartbeatChecksSource.includes(token), `heartbeat orphan cleanup still uses broad pattern ${token}`);
     }
   });
 });
