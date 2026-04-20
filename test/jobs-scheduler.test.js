@@ -286,6 +286,52 @@ describe('ReminderScheduler', () => {
     assert.equal(sent.length, 0);
   });
 
+  it('restores a failed delivery to due state and records the failed attempt', async () => {
+    const attempts = [];
+    notifier.register('feishu', async (message) => {
+      attempts.push(message);
+      throw new Error('send failed');
+    });
+
+    const job = store.createJob({
+      type: 'reminder',
+      creatorId: 'creator-fail',
+      ownerId: 'owner-fail',
+      deliveryChannel: 'feishu',
+      deliveryTarget: 'owner-default-endpoint',
+      timezone: 'Asia/Shanghai',
+      scheduleKind: 'once',
+      scheduleExpr: '2026-04-20 09:30',
+      nextRunAt: '2026-04-20T01:30:00.000Z',
+      status: 'active',
+      payload: { text: 'Retry me' },
+      policy: {},
+      createdAt: '2026-04-20T00:00:00.000Z',
+      updatedAt: '2026-04-20T00:00:00.000Z',
+    });
+
+    await scheduler.tick('2026-04-20T01:30:00.000Z');
+
+    const runRow = store.getRun(attempts[0].meta.runId);
+    const jobRow = store.getJob(job.id);
+    const notifications = store.listNotificationsByJobId(job.id);
+
+    assert.equal(attempts.length, 1);
+    assert.equal(runRow.status, 'failed');
+    assert.deepEqual(runRow.output, {
+      delivered: false,
+      error: 'send failed',
+      notificationRecorded: true,
+    });
+    assert.equal(runRow.error_text, 'send failed');
+    assert.equal(jobRow.last_run_at, null);
+    assert.equal(jobRow.next_run_at, '2026-04-20T01:30:00.000Z');
+    assert.equal(store.listDueJobs('2026-04-20T01:30:00.000Z').length, 1);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].status, 'failed');
+    assert.equal(notifications[0].error_text, 'send failed');
+  });
+
   it('advances a recurring reminder to the next run after a tick', async () => {
     const recurringScheduler = new ReminderScheduler({
       store,
