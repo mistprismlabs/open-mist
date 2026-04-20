@@ -257,6 +257,21 @@ npm install
 ./scripts/check-runtime.sh
 ```
 
+如果这是**旧实例升级到新的 checkout 路径**，AI 在继续初始化前还应额外检查旧状态是否已经迁移。
+
+判断规则很简单：
+
+- 首次安装：不需要迁移，继续正常流程
+- 旧实例升级：如果新 checkout 启动后看起来像“首次安装”，优先检查旧项目目录下的状态文件是否还留在原路径
+
+升级场景下优先关注这些状态：
+
+- `data/sessions.json`
+- `data/user-profiles.json`
+- `data/memory/`
+
+如果旧状态还在旧 checkout 下，AI 应先复制这些状态到新 checkout，再继续 `.env`、service 和健康检查流程；不要在状态未迁移时把实例误判成全新安装。
+
 ## 8. 初始化 .env
 
 从公开模板生成实例配置：
