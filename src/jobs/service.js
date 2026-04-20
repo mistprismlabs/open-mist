@@ -1,7 +1,7 @@
 'use strict';
 
 class JobsService {
-  constructor({ store, parseReminderSchedule, computeNextRunAt, resolveOwnerTarget }) {
+  constructor({ store, parseReminderSchedule, computeNextRunAt, resolveOwnerTarget, assertDeliveryTarget = null }) {
     if (!store) {
       throw new Error('store is required');
     }
@@ -19,10 +19,12 @@ class JobsService {
     this.parseReminderSchedule = parseReminderSchedule;
     this.computeNextRunAt = computeNextRunAt;
     this.resolveOwnerTarget = resolveOwnerTarget;
+    this.assertDeliveryTarget = assertDeliveryTarget;
   }
 
   createReminderJob({ creatorId, ownerId, scheduleKind, scheduleExpr, timezone, text }) {
     const resolvedTarget = this._resolveOwnerTarget(ownerId);
+    this._assertDeliveryTarget(resolvedTarget);
     const parsedSchedule = this.parseReminderSchedule(scheduleKind, scheduleExpr, timezone);
     const nextRunAt = this.computeNextRunAt(parsedSchedule, new Date().toISOString());
     const policy = {};
@@ -51,8 +53,8 @@ class JobsService {
     return this.store.getJob(id);
   }
 
-  listJobs({ status, ownerId, limit } = {}) {
-    return this.store.listJobs({ status, ownerId, limit });
+  listJobs({ status, ownerId, creatorId, limit } = {}) {
+    return this.store.listJobs({ status, ownerId, creatorId, limit });
   }
 
   pauseJob(id) {
@@ -100,6 +102,14 @@ class JobsService {
       target,
       chatType: resolvedTarget.chatType || resolvedTarget.chat_type || null,
     };
+  }
+
+  _assertDeliveryTarget(resolvedTarget) {
+    if (typeof this.assertDeliveryTarget !== 'function') {
+      return;
+    }
+
+    this.assertDeliveryTarget(resolvedTarget);
   }
 }
 

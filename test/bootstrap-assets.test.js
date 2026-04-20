@@ -190,11 +190,16 @@ test('.env example and deploy doc describe reminder job runtime paths and privat
 
   assert.match(envExample, /JOBS_DB_PATH=/);
   assert.match(envExample, /JOB_TARGETS_PATH=/);
+  assert.match(envExample, /JOBS_ADMIN_IDS=/);
   assert.match(envExample, /JOBS_DEFAULT_TIMEZONE=/);
   assert.match(envExample, /JOBS_TICK_INTERVAL_MS=/);
   assert.match(deployDoc, /JOBS_DB_PATH/);
   assert.match(deployDoc, /JOB_TARGETS_PATH/);
+  assert.match(deployDoc, /JOBS_ADMIN_IDS/);
   assert.match(deployDoc, /owner/i);
   assert.match(deployDoc, /job-targets\.json/);
   assert.match(deployDoc, /私有|private/i);
+  assert.match(deployDoc, /WECOM_BOT_ID/);
+  assert.match(deployDoc, /WECOM_BOT_SECRET/);
+  assert.match(deployDoc, /app-only|只有 App 通道|Bot WebSocket/i);
 });

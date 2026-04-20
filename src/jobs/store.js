@@ -236,7 +236,7 @@ class JobsStore {
     return rows.map(hydrateJob);
   }
 
-  listJobs({ status = null, ownerId = null, limit = 20 } = {}) {
+  listJobs({ status = null, ownerId = null, creatorId = null, limit = 20 } = {}) {
     const conditions = [];
     const params = [];
 
@@ -247,6 +247,10 @@ class JobsStore {
     if (ownerId) {
       conditions.push('owner_id = ?');
       params.push(ownerId);
+    }
+    if (creatorId) {
+      conditions.push('creator_id = ?');
+      params.push(creatorId);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

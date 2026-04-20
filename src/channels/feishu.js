@@ -249,7 +249,7 @@ class FeishuAdapter {
       // === 菜单指令处理 ===
       const bareCmd = text.match(/^\/(build|task|remind|jobs|session|status|help|log|cos|memory|dev-go|dev-fix|dev-refactor|update)$/);
       if (bareCmd) {
-        await this._handleMenuCommand(messageId, chatId, bareCmd[1]);
+        await this._handleMenuCommand(messageId, chatId, bareCmd[1], senderId || chatId);
         return;
       }
 
@@ -268,7 +268,7 @@ class FeishuAdapter {
 
       const jobCommandMatch = text.match(/^\/job\s+(pause|resume|delete)\s+([A-Za-z0-9_-]+)\s*$/);
       if (jobCommandMatch) {
-        await this._handleJobControlCommand(messageId, jobCommandMatch[1], jobCommandMatch[2]);
+        await this._handleJobControlCommand(messageId, senderId || chatId, jobCommandMatch[1], jobCommandMatch[2]);
         return;
       }
 
@@ -484,6 +484,11 @@ class FeishuAdapter {
             return { toast: { type: 'error', content: '提醒任务功能暂未启用' } };
           }
 
+          const operatorId = this._resolveCardOperatorId(data, chatId);
+          if (!this._isJobsAdmin(operatorId)) {
+            return { toast: { type: 'error', content: '只有提醒任务管理员可以创建或代管提醒任务。' } };
+          }
+
           const ownerId = action.form_value.reminder_owner_id.trim();
           const scheduleKind = String(action.form_value.reminder_schedule_kind || '').trim();
           const scheduleExpr = String(action.form_value.reminder_schedule_expr || '').trim();
@@ -495,7 +500,7 @@ class FeishuAdapter {
           }
 
           const job = this.jobsService.createReminderJob({
-            creatorId: this._resolveCardOperatorId(data, chatId),
+            creatorId: operatorId,
             ownerId,
             scheduleKind,
             scheduleExpr,
@@ -580,6 +585,13 @@ class FeishuAdapter {
         let card;
         if (cmd === 'build') card = this.cards.buildBuildCard();
         else if (cmd === 'task') card = this.cards.buildTaskCard();
+        else if (cmd === 'remind') {
+          const operatorId = this._resolveCardOperatorId(data, chatId);
+          if (!this._isJobsAdmin(operatorId)) {
+            return { toast: { type: 'error', content: '只有提醒任务管理员可以打开提醒管理入口。' } };
+          }
+          card = this.cards.buildReminderCard();
+        }
         else if (cmd === 'session') card = this.cards.buildSessionCard(chatId);
         else if (cmd === 'status') card = this.cards.buildStatusCard(this.handled.size);
         else if (cmd === 'log') card = this.cards.buildLogCard(this.recentLogs);
@@ -627,21 +639,32 @@ class FeishuAdapter {
     if (this.recentLogs.length > 20) this.recentLogs.shift();
   }
 
-  async _handleJobControlCommand(messageId, action, jobId) {
+  async _handleJobControlCommand(messageId, operatorId, action, jobId) {
     if (!this.jobsService) {
       await this._reply(messageId, '提醒任务功能暂未启用。');
       return;
     }
 
+    const job = this.jobsService.getJob(jobId);
+    if (!job) {
+      await this._reply(messageId, `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    if (!this._canManageJob(operatorId, job)) {
+      await this._reply(messageId, `你无权限管理提醒任务：${jobId}`);
+      return;
+    }
+
     if (action === 'pause') {
-      const job = this.jobsService.pauseJob(jobId);
-      await this._reply(messageId, job ? `已暂停提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      const pausedJob = this.jobsService.pauseJob(jobId);
+      await this._reply(messageId, pausedJob ? `已暂停提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
       return;
     }
 
     if (action === 'resume') {
-      const job = this.jobsService.resumeJob(jobId);
-      await this._reply(messageId, job ? `已恢复提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      const resumedJob = this.jobsService.resumeJob(jobId);
+      await this._reply(messageId, resumedJob ? `已恢复提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
       return;
     }
 
@@ -681,9 +704,41 @@ class FeishuAdapter {
       || fallbackChatId;
   }
 
+  _getJobsAdminIds() {
+    const raw = [
+      process.env.JOBS_ADMIN_IDS || '',
+      process.env.ADMIN_USER_ID || '',
+      process.env.FEISHU_OWNER_ID || '',
+    ].filter(Boolean).join(',');
+
+    return new Set(
+      raw
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    );
+  }
+
+  _isJobsAdmin(operatorId) {
+    if (!operatorId) {
+      return false;
+    }
+    return this._getJobsAdminIds().has(operatorId);
+  }
+
+  _canManageJob(operatorId, job) {
+    if (!job) {
+      return false;
+    }
+    if (this._isJobsAdmin(operatorId)) {
+      return true;
+    }
+    return Boolean(operatorId) && job.creator_id === operatorId;
+  }
+
   // ==================== 菜单指令 ====================
 
-  async _handleMenuCommand(messageId, chatId, cmd) {
+  async _handleMenuCommand(messageId, chatId, cmd, operatorId = null) {
     if (cmd === 'session') {
       await this._replyCard(messageId, this.cards.buildSessionCard(chatId));
       return;
@@ -721,12 +776,20 @@ class FeishuAdapter {
     }
 
     if (cmd === 'remind') {
+      if (!this._isJobsAdmin(operatorId)) {
+        await this._reply(messageId, '只有提醒任务管理员可以打开提醒管理入口。');
+        return;
+      }
       await this._replyCard(messageId, this.cards.buildReminderCard());
       return;
     }
 
     if (cmd === 'jobs') {
-      const jobs = this.jobsService ? this.jobsService.listJobs({ limit: 10 }) : [];
+      const jobs = this.jobsService
+        ? this.jobsService.listJobs(this._isJobsAdmin(operatorId)
+            ? { limit: 10 }
+            : { limit: 10, creatorId: operatorId })
+        : [];
       await this._reply(messageId, this._formatJobsListText(jobs));
       return;
     }

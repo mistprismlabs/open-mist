@@ -45,11 +45,25 @@ async function main() {
     filePath: process.env.JOB_TARGETS_PATH || 'data/job-targets.json',
   });
   const jobsNotifier = new JobsNotifier();
+  const assertDeliveryTarget = ({ channel }) => {
+    if (channel === 'feishu' && !channelPlan.feishu.enabled) {
+      throw new Error('Feishu reminders require the Feishu channel to be configured.');
+    }
+
+    if (channel === 'wecom' && !channelPlan.wecom.activeSources.includes('bot')) {
+      throw new Error('WeCom reminders require bot channel credentials (WECOM_BOT_ID/WECOM_BOT_SECRET); app-only WeCom cannot receive reminder jobs yet.');
+    }
+
+    if (channel === 'weixin' && String(process.env.WEIXIN_ENABLED).toLowerCase() !== 'true') {
+      throw new Error('Weixin reminders require WEIXIN_ENABLED=true.');
+    }
+  };
   const jobsService = new JobsService({
     store: jobsStore,
     parseReminderSchedule,
     computeNextRunAt,
     resolveOwnerTarget: (ownerId) => ownerTargets.get(ownerId),
+    assertDeliveryTarget,
   });
   const reminderScheduler = new ReminderScheduler({
     store: jobsStore,
@@ -91,13 +105,19 @@ async function main() {
   if (channelPlan.wecom.enabled) {
     const { WeComAdapter } = require('./channels/wecom');
     wecom = retainAdapter(new WeComAdapter({ gateway }));
-    jobsNotifier.register('wecom', async ({ target, text, meta = {} }) => {
-      return wecom.sendReminder({
-        chatId: target,
-        chatType: meta.chatType || 'p2p',
-        text,
+    if (channelPlan.wecom.activeSources.includes('bot')) {
+      jobsNotifier.register('wecom', async ({ target, text, meta = {} }) => {
+        return wecom.sendReminder({
+          chatId: target,
+          chatType: meta.chatType || 'p2p',
+          text,
+        });
       });
-    });
+    } else {
+      jobsNotifier.register('wecom', async () => {
+        throw new Error('WeCom reminders require bot channel credentials (WECOM_BOT_ID/WECOM_BOT_SECRET); app-only WeCom cannot receive reminder jobs yet.');
+      });
+    }
     await wecom.start();
   } else {
     console.log(`[${BOT_NAME}] WeCom channel skipped (missing credentials)`);
