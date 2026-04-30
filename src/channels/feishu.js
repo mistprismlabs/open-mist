@@ -18,7 +18,7 @@ const STALE_THRESHOLD_MS = 30 * 1000;
 const SUPPORTED_MSG_TYPES = ["text", "image", "post", "file"];
 
 class FeishuAdapter {
-  constructor({ gateway, bitable, taskExecutor, deployer }) {
+  constructor({ gateway, bitable, taskExecutor, deployer, jobsService }) {
     this.gateway = gateway;
     // 通过 gateway 访问共享资源（卡片构建等需要）
     this.session = gateway.session;
@@ -28,6 +28,7 @@ class FeishuAdapter {
     this.bitable = bitable;
     this.taskExecutor = taskExecutor;
     this.deployer = deployer;
+    this.jobsService = jobsService || null;
     this.handled = new Map();
     this._lastProgress = new Map(); // chatId → timestamp，进度防刷屏
     this._placeholders = new Map(); // chatId → placeholderId，流式占位消息
@@ -246,9 +247,9 @@ class FeishuAdapter {
       await this._checkPendingNotifications(messageId);
 
       // === 菜单指令处理 ===
-      const bareCmd = text.match(/^\/(build|task|session|status|help|log|cos|memory|dev-go|dev-fix|dev-refactor|update)$/);
+      const bareCmd = text.match(/^\/(build|task|remind|jobs|session|status|help|log|cos|memory|dev-go|dev-fix|dev-refactor|update)$/);
       if (bareCmd) {
-        await this._handleMenuCommand(messageId, chatId, bareCmd[1]);
+        await this._handleMenuCommand(messageId, chatId, bareCmd[1], senderId || chatId);
         return;
       }
 
@@ -262,6 +263,12 @@ class FeishuAdapter {
       if (taskMatch) {
         await this._reply(messageId, `⚡ 收到，开始执行…`);
         this._runGatewayTaskAsync(chatId, taskMatch[1].trim());
+        return;
+      }
+
+      const jobCommandMatch = text.match(/^\/job\s+(pause|resume|delete)\s+([A-Za-z0-9_-]+)\s*$/);
+      if (jobCommandMatch) {
+        await this._handleJobControlCommand(messageId, senderId || chatId, jobCommandMatch[1], jobCommandMatch[2]);
         return;
       }
 
@@ -472,6 +479,41 @@ class FeishuAdapter {
           const preview = instruction.length > 30 ? instruction.slice(0, 30) + '…' : instruction;
           return { toast: { type: 'success', content: `收到，开始执行：${preview}` } };
         }
+        if (action.form_value?.reminder_owner_id !== undefined) {
+          if (!this.jobsService) {
+            return { toast: { type: 'error', content: '提醒任务功能暂未启用' } };
+          }
+
+          const operatorId = this._resolveCardOperatorId(data, chatId);
+          if (!this._isJobsAdmin(operatorId)) {
+            return { toast: { type: 'error', content: '只有提醒任务管理员可以创建或代管提醒任务。' } };
+          }
+
+          const ownerId = action.form_value.reminder_owner_id.trim();
+          const scheduleKind = String(action.form_value.reminder_schedule_kind || '').trim();
+          const scheduleExpr = String(action.form_value.reminder_schedule_expr || '').trim();
+          const timezone = String(action.form_value.reminder_timezone || process.env.JOBS_DEFAULT_TIMEZONE || 'Asia/Shanghai').trim();
+          const reminderText = String(action.form_value.reminder_text || '').trim();
+
+          if (!ownerId || !scheduleKind || !scheduleExpr || !reminderText) {
+            return { toast: { type: 'error', content: '请完整填写提醒任务表单' } };
+          }
+
+          const job = this.jobsService.createReminderJob({
+            creatorId: operatorId,
+            ownerId,
+            scheduleKind,
+            scheduleExpr,
+            timezone,
+            text: reminderText,
+          });
+
+          await this._sendMessage(
+            chatId,
+            `已创建提醒任务：${job.id}\nowner: ${job.owner_id}\nschedule: ${job.schedule_kind} ${job.schedule_expr}\nnext: ${job.next_run_at || '待计算'}\ntext: ${job.payload?.text || ''}`
+          );
+          return { toast: { type: 'success', content: `已创建提醒：${job.id}` } };
+        }
         if (action.form_value?.session_name !== undefined) {
           const name = action.form_value.session_name.trim();
           this.session.setName(chatId, name);
@@ -543,6 +585,13 @@ class FeishuAdapter {
         let card;
         if (cmd === 'build') card = this.cards.buildBuildCard();
         else if (cmd === 'task') card = this.cards.buildTaskCard();
+        else if (cmd === 'remind') {
+          const operatorId = this._resolveCardOperatorId(data, chatId);
+          if (!this._isJobsAdmin(operatorId)) {
+            return { toast: { type: 'error', content: '只有提醒任务管理员可以打开提醒管理入口。' } };
+          }
+          card = this.cards.buildReminderCard();
+        }
         else if (cmd === 'session') card = this.cards.buildSessionCard(chatId);
         else if (cmd === 'status') card = this.cards.buildStatusCard(this.handled.size);
         else if (cmd === 'log') card = this.cards.buildLogCard(this.recentLogs);
@@ -590,9 +639,106 @@ class FeishuAdapter {
     if (this.recentLogs.length > 20) this.recentLogs.shift();
   }
 
+  async _handleJobControlCommand(messageId, operatorId, action, jobId) {
+    if (!this.jobsService) {
+      await this._reply(messageId, '提醒任务功能暂未启用。');
+      return;
+    }
+
+    const job = this.jobsService.getJob(jobId);
+    if (!job) {
+      await this._reply(messageId, `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    if (!this._canManageJob(operatorId, job)) {
+      await this._reply(messageId, `你无权限管理提醒任务：${jobId}`);
+      return;
+    }
+
+    if (action === 'pause') {
+      const pausedJob = this.jobsService.pauseJob(jobId);
+      await this._reply(messageId, pausedJob ? `已暂停提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    if (action === 'resume') {
+      const resumedJob = this.jobsService.resumeJob(jobId);
+      await this._reply(messageId, resumedJob ? `已恢复提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    if (action === 'delete') {
+      const deleted = this.jobsService.deleteJob(jobId);
+      await this._reply(messageId, deleted ? `已删除提醒任务：${jobId}` : `未找到提醒任务：${jobId}`);
+      return;
+    }
+
+    await this._reply(messageId, '不支持的任务操作。');
+  }
+
+  _formatJobsListText(jobs) {
+    if (!Array.isArray(jobs) || jobs.length === 0) {
+      return '当前没有提醒任务。';
+    }
+
+    const lines = jobs.map((job, index) => {
+      const text = job?.payload?.text || '';
+      return [
+        `${index + 1}. \`${job.id}\``,
+        `owner=${job.owner_id}`,
+        `status=${job.status}`,
+        `schedule=${job.schedule_kind} ${job.schedule_expr}`,
+        `next=${job.next_run_at || '无'}`,
+        text ? `text=${text}` : null,
+      ].filter(Boolean).join(' | ');
+    });
+
+    return `当前提醒任务：\n${lines.join('\n')}`;
+  }
+
+  _resolveCardOperatorId(data, fallbackChatId) {
+    return data?.operator?.operator_id?.open_id
+      || data?.operator?.operator_id?.user_id
+      || data?.operator?.open_id
+      || fallbackChatId;
+  }
+
+  _getJobsAdminIds() {
+    const raw = [
+      process.env.JOBS_ADMIN_IDS || '',
+      process.env.ADMIN_USER_ID || '',
+      process.env.FEISHU_OWNER_ID || '',
+    ].filter(Boolean).join(',');
+
+    return new Set(
+      raw
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    );
+  }
+
+  _isJobsAdmin(operatorId) {
+    if (!operatorId) {
+      return false;
+    }
+    return this._getJobsAdminIds().has(operatorId);
+  }
+
+  _canManageJob(operatorId, job) {
+    if (!job) {
+      return false;
+    }
+    if (this._isJobsAdmin(operatorId)) {
+      return true;
+    }
+    return Boolean(operatorId) && job.creator_id === operatorId;
+  }
+
   // ==================== 菜单指令 ====================
 
-  async _handleMenuCommand(messageId, chatId, cmd) {
+  async _handleMenuCommand(messageId, chatId, cmd, operatorId = null) {
     if (cmd === 'session') {
       await this._replyCard(messageId, this.cards.buildSessionCard(chatId));
       return;
@@ -626,6 +772,25 @@ class FeishuAdapter {
 
     if (cmd === 'task') {
       await this._replyCard(messageId, this.cards.buildTaskCard());
+      return;
+    }
+
+    if (cmd === 'remind') {
+      if (!this._isJobsAdmin(operatorId)) {
+        await this._reply(messageId, '只有提醒任务管理员可以打开提醒管理入口。');
+        return;
+      }
+      await this._replyCard(messageId, this.cards.buildReminderCard());
+      return;
+    }
+
+    if (cmd === 'jobs') {
+      const jobs = this.jobsService
+        ? this.jobsService.listJobs(this._isJobsAdmin(operatorId)
+            ? { limit: 10 }
+            : { limit: 10, creatorId: operatorId })
+        : [];
+      await this._reply(messageId, this._formatJobsListText(jobs));
       return;
     }
 
@@ -716,25 +881,37 @@ class FeishuAdapter {
 
   async _sendMessage(chatId, text) {
     try {
-      const chunks = this._splitMessage(text, 3500);
-      for (const chunk of chunks) {
-        let formatted = this.formatter.format(chunk);
-
-        if (formatted.pendingImages && formatted.pendingImages.length > 0) {
-          formatted = await this._resolvePendingImages(formatted);
-        }
-
-        await this.client.im.message.create({
-          data: {
-            receive_id: chatId,
-            content: formatted.content,
-            msg_type: formatted.msg_type,
-          },
-          params: { receive_id_type: "chat_id" },
-        });
-      }
+      await this._sendMessageInternal(chatId, text);
     } catch (err) {
       console.error("[Feishu] Failed to send message:", err.message);
+    }
+  }
+
+  async sendReminder({ chatId, text }) {
+    return this._sendMessageStrict(chatId, text);
+  }
+
+  async _sendMessageStrict(chatId, text) {
+    return this._sendMessageInternal(chatId, text);
+  }
+
+  async _sendMessageInternal(chatId, text) {
+    const chunks = this._splitMessage(text, 3500);
+    for (const chunk of chunks) {
+      let formatted = this.formatter.format(chunk);
+
+      if (formatted.pendingImages && formatted.pendingImages.length > 0) {
+        formatted = await this._resolvePendingImages(formatted);
+      }
+
+      await this.client.im.message.create({
+        data: {
+          receive_id: chatId,
+          content: formatted.content,
+          msg_type: formatted.msg_type,
+        },
+        params: { receive_id_type: "chat_id" },
+      });
     }
   }
 
