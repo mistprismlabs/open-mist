@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const packageJson = require('../package.json');
 const {
   buildWeixinClientVersion,
   buildWeixinSessionKey,
@@ -55,7 +56,7 @@ describe('weixin adapter helpers', () => {
     assert.equal(payload.msg.context_token, 'ctx_abc');
     assert.equal(payload.msg.item_list[0].type, 1);
     assert.equal(payload.msg.item_list[0].text_item.text, 'OK');
-    assert.equal(payload.base_info.channel_version, '1.3.0');
+    assert.equal(payload.base_info.channel_version, packageJson.version);
   });
 
   it('loads stored credential from openmist account dir', () => {

@@ -12,6 +12,8 @@ const fs = require('fs');
 const path = require('path');
 
 const SERVICE_NAME = process.env.SERVICE_NAME || 'openmist.service';
+const PROJECT_DIR = process.env.PROJECT_DIR || path.resolve(__dirname, '..');
+const UPDATES_DIR = path.join(PROJECT_DIR, 'data', 'updates');
 
 const AVAILABLE_FILE = path.join(UPDATES_DIR, 'available.json');
 const LAST_UPDATE_FILE = path.join(UPDATES_DIR, 'last-update.json');
