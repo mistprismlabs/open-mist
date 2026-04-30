@@ -209,7 +209,12 @@ class Gateway {
     try {
       response = await this.claude.chat(enrichedPrompt, existingSessionId, mediaFiles, { effort, onProgress, onRetry, onSessionInit });
     } catch (err) {
-      if (existingSessionId && err.message.includes('exited with code')) {
+      const shouldRetryFreshSession = existingSessionId && (
+        err.message.includes('exited with code') ||
+        err.message.includes('No conversation found with session ID')
+      );
+
+      if (shouldRetryFreshSession) {
         console.warn(`[Gateway] Resume failed (${err.message}), retrying with fresh session`);
         this.session.clear(chatId);
         isNewSession = true;
