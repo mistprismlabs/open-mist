@@ -78,19 +78,20 @@ async function main() {
     reminderScheduler,
   });
 
-  const feishu = retainAdapter(new FeishuAdapter({
-    gateway,
-    bitable: new BitableLogger(),
-    taskExecutor: new TaskExecutor(),
-    deployer: new Deployer(),
-    jobsService,
-  }));
-
-  jobsNotifier.register('feishu', async ({ target, text }) => {
-    return feishu.sendReminder({ chatId: target, text });
-  });
-
+  let feishu = null;
   if (channelPlan.feishu.enabled) {
+    feishu = retainAdapter(new FeishuAdapter({
+      gateway,
+      bitable: new BitableLogger(),
+      taskExecutor: new TaskExecutor(),
+      deployer: new Deployer(),
+      jobsService,
+    }));
+
+    jobsNotifier.register('feishu', async ({ target, text }) => {
+      return feishu.sendReminder({ chatId: target, text });
+    });
+
     await feishu.start();
   } else {
     console.log(`[${BOT_NAME}] Feishu channel skipped (missing credentials)`);
